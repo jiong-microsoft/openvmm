@@ -2002,6 +2002,7 @@ async fn new_underhill_vm(
         virt::IsolationType::Snp => Some(Box::new(tee_call::SnpCall)),
         virt::IsolationType::Tdx => Some(Box::new(tee_call::TdxCall)),
         virt::IsolationType::Vbs => Some(Box::new(tee_call::VbsCall)),
+        virt::IsolationType::Cca => todo!(),
         virt::IsolationType::None => None,
     };
 
@@ -2877,6 +2878,7 @@ async fn new_underhill_vm(
             virt::IsolationType::Snp => AttestationType::Snp,
             virt::IsolationType::Tdx => AttestationType::Tdx,
             virt::IsolationType::Vbs => AttestationType::Vbs,
+            virt::IsolationType::Cca => AttestationType::Cca,
             virt::IsolationType::None => AttestationType::Host,
         };
 
@@ -2904,6 +2906,7 @@ async fn new_underhill_vm(
                                 .attempt_ak_cert_callback()
                         }),
                 ),
+                AttestationType::Cca => todo!(),
             }
         };
 
