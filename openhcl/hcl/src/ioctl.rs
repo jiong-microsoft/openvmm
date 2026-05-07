@@ -137,6 +137,8 @@ pub enum Error {
     SetRegisters(#[source] SetRegError),
     #[error("Invalid register value")]
     InvalidRegisterValue,
+    #[error("failed to setup memory perms {0:#x?}")]
+    VtlMem(#[source] HvError),
 }
 
 /// Error for IOCTL errors specifically.
@@ -209,6 +211,13 @@ pub enum ApplyVtlProtectionsError {
         error: TdCallResultCode,
         range: MemoryRange,
         permissions: x86defs::tdx::TdgMemPageGpaAttr,
+        vtl: HvInputVtl,
+    },
+    #[error(
+        "cca failed when protecting pages {range} with permissions for vtl {vtl:?}"
+    )]
+    Cca {
+        range: MemoryRange,
         vtl: HvInputVtl,
     },
     #[error("no valid protections for vtl {0:?}")]
@@ -1018,7 +1027,6 @@ impl MshvHvcall {
                     // Hardware isolated VMs cannot trust output from the hypervisor, but check for
                     // consistency between the number of elements processed and the expected count. A
                     // violation of this assertion indicates a buggy or malicious hypervisor.
-                    #[cfg(guest_arch = "x86_64")]
                     assert!(
                         (call_object.status.result().is_ok()
                             && call_object.control.rep_count()

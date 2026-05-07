@@ -20,6 +20,8 @@ use hvdef::HV_PAGE_SIZE;
 use hvdef::HvArm64RegisterName;
 use hvdef::HvRegisterName;
 use hvdef::HvRegisterValue;
+#[cfg(guest_arch = "aarch64")]
+use memory_range::MemoryRange;
 use rsi::RSI_PLANE_ENTER_FLAGS_TRAP_SIMD;
 use rsi::RSI_PLANE_GIC_NUM_LRS;
 use rsi::RSI_PLANE_NR_GPRS;
@@ -367,12 +369,19 @@ impl MshvVtl {
         Ok(())
     }
 
+    /// Setter for memory permissions
+    #[cfg(guest_arch = "aarch64")]
+    pub fn cca_set_mem_perm(&self, range: &MemoryRange) -> Result<(), Error> {
+        self
+            .rsi_set_mem_perm(GuestVtl::Vtl0, range)
+            .map_err(Error::VtlMem)
+    }
+
     /// Assign given memory range to the VTL.
     pub fn rsi_set_mem_perm(
         &self,
         vtl: GuestVtl,
-        base_addr: u64,
-        top_addr: u64,
+        range: &MemoryRange,
     ) -> Result<(), HvError> {
         let set_mem_perm = mshv_rsi_set_mem_perm {
             plane: if vtl == GuestVtl::Vtl0 {
@@ -380,8 +389,8 @@ impl MshvVtl {
             } else {
                 panic!("Invalid VTL")
             },
-            base_addr,
-            top_addr,
+            base_addr: range.start(),
+            top_addr: range.end(),
         };
 
         // SAFETY: Calling hcl_rsi_set_mem_perm ioctl with the correct arguments.
@@ -413,9 +422,8 @@ impl Hcl {
     pub fn rsi_set_mem_perm(
         &self,
         vtl: GuestVtl,
-        base_addr: u64,
-        top_addr: u64,
+        range: MemoryRange,
     ) -> Result<(), HvError> {
-        self.mshv_vtl.rsi_set_mem_perm(vtl, base_addr, top_addr)
+        self.mshv_vtl.rsi_set_mem_perm(vtl, &range)
     }
 }

@@ -23,7 +23,6 @@ use inspect::Inspect;
 use memory_range::AlignedSubranges;
 use memory_range::MemoryRange;
 use pal_async::task::Spawn;
-use virt_mshv_vtl::UhProtoPartition;
 use std::sync::Arc;
 use tracing::Instrument;
 use underhill_threadpool::AffinitizedThreadpool;
@@ -104,12 +103,10 @@ pub struct BootInit<'a> {
     pub accepted_regions: &'a [MemoryRange],
 }
 
-pub async fn init(params: &Init<'_>, p: &UhProtoPartition<'_>) -> anyhow::Result<MemoryMappings> {
-    #[cfg(not(guest_arch = "aarch64"))]
-    let _ = p;
+pub async fn init(params: &Init<'_>) -> anyhow::Result<MemoryMappings> {
 
     let mut validated_ranges = Vec::new();
-    let vtom;
+    let vtom = params.vtom;
 
     let acceptor = if params.isolation.is_isolated() {
         Some(Arc::new(MemoryAcceptor::new(params.isolation)?))
@@ -195,45 +192,43 @@ pub async fn init(params: &Init<'_>, p: &UhProtoPartition<'_>) -> anyhow::Result
                 }
             });
         }
+    } else {
+        // Prepare VTL0 memory for mapping.
+        let acceptor = acceptor.as_ref().unwrap();
+        let ram = params.mem_layout.ram().iter().map(|r| r.range);
+        // On hardware isolated platforms, accepted memory was accepted with
+        // VTL2 only permissions. Provide VTL0 access here.
+        tracing::debug!("Applying VTL0 protections");
+        if hardware_isolated {
+            for range in ram
+            {
+                acceptor.apply_initial_lower_vtl_protections(range)?;
+            }
+        }
     }
 
     // Tell the hypervisor we want to use the shared pool for shared memory.
     //
     // TODO: don't we possibly need to unaccept these pages for SNP? Or are
     // we assuming they were not in the boot loader's pre-accepted pages.
-    match params.isolation {
-        #[cfg(guest_arch = "aarch64")]
-        IsolationType::Cca => {
-            p.cca_set_mem_perm(
-                params.mem_layout.ram()[0].range.start(),
-                params.mem_layout.ram()[0].range.end(),
-            )
-            .expect("failed to set CCA memory permissions");
+    if let Some(acceptor) = &acceptor {
+        tracing::debug!("Making shared pool pages shared");
 
-            vtom = Some((1 as u64) << (p.realm_config().ipa_width() - 1));
-        }
-        _ => {
-            vtom = params.vtom;
-            if let Some(acceptor) = &acceptor {
-                tracing::debug!("Making shared pool pages shared");
-
-                for range in params.shared_pool {
-                    // On VBS, we need to accept the pages first before we move them to
-                    // shared.
-                    if params.isolation == IsolationType::Vbs {
-                        acceptor
-                            .accept_lower_vtl_pages(range.range)
-                            .context("unable to accept shared pool pages")?;
-                    }
-
-                    acceptor
-                        .modify_gpa_visibility(
-                            hvdef::hypercall::HostVisibilityType::SHARED,
-                            &Vec::from_iter(range.range.start_4k_gpn()..range.range.end_4k_gpn()),
-                        )
-                        .context("unable to make shared pool pages shared vis")?;
-                }
+        for range in params.shared_pool {
+            // On VBS, we need to accept the pages first before we move them to
+            // shared.
+            if params.isolation == IsolationType::Vbs {
+                acceptor
+                    .accept_lower_vtl_pages(range.range)
+                    .context("unable to accept shared pool pages")?;
             }
+
+            acceptor
+                .modify_gpa_visibility(
+                    hvdef::hypercall::HostVisibilityType::SHARED,
+                    &Vec::from_iter(range.range.start_4k_gpn()..range.range.end_4k_gpn()),
+                )
+                .context("unable to make shared pool pages shared vis")?;
         }
     }
 

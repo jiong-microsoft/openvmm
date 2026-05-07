@@ -145,8 +145,8 @@ pub enum Error {
     InstallIntercept(HvInterceptType, HvError),
     #[error("failed to query hypervisor register {0:#x?}")]
     Register(HvRegisterName, #[source] HvError),
-    #[error("failed to setup memory perms {0:#x?}")]
-    VtlMem(#[source] HvError),
+    // #[error("failed to setup memory perms {0:#x?}")]
+    // VtlMem(#[source] HvError),
     #[error("failed to set vsm partition config register")]
     VsmPartitionConfig(#[source] SetVsmPartitionConfigError),
     #[error("failed to create virtual device")]
@@ -1722,7 +1722,9 @@ impl<'a> UhProtoPartition<'a> {
             .get_privileges_and_features_info()
             .map_err(Error::GetReg)?;
 
-        let guest_vsm_available = {
+        let guest_vsm_available = if hcl_isolation == hcl::ioctl::IsolationType::Cca {
+            false
+        } else {
             let privs = hcl
                 .get_privileges_and_features_info()
                 .map_err(Error::GetReg)?;
@@ -1974,17 +1976,24 @@ impl<'a> UhProtoPartition<'a> {
             .expect("registering synic intercept cannot fail");
         }
 
-        let cvm_state = if is_hardware_isolated {
+        let cvm_state = if matches!(isolation, IsolationType::Snp | IsolationType::Tdx) {
             let vsm_caps = hcl.get_vsm_capabilities().map_err(Error::GetReg)?;
             let proxy_interrupt_redirect_available =
                 vsm_caps.proxy_interrupt_redirect_available() && !params.disable_proxy_redirect;
-
             Some(Self::construct_cvm_state(
                 &params,
                 late_params.cvm_params.unwrap(),
                 &caps,
                 guest_vsm_available,
                 proxy_interrupt_redirect_available,
+            )?)
+        } else if isolation == IsolationType::Cca {
+            Some(Self::construct_cvm_state(
+                &params,
+                late_params.cvm_params.unwrap(),
+                &caps,
+                guest_vsm_available,
+                false,
             )?)
         } else {
             None
@@ -2072,13 +2081,6 @@ impl<'a> UhProtoPartition<'a> {
         self.realm_config
     }
 
-    /// Setter for memory permissions
-    #[cfg(guest_arch = "aarch64")]
-    pub fn cca_set_mem_perm(&self, base_addr: u64, top_addr: u64) -> Result<(), Error> {
-        self.hcl
-            .rsi_set_mem_perm(GuestVtl::Vtl0, base_addr, top_addr)
-            .map_err(Error::VtlMem)
-    }
 }
 
 impl UhPartition {
