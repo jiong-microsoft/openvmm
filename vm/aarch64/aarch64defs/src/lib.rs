@@ -260,10 +260,10 @@ impl From<IssDataAbort> for EsrEl2 {
             .with_wnr(((iss >> 6) & 1) != 0)
             .with_mid_iss(((iss >> 7) & 0x1ff) as u16)
             .with_b_srt(((iss >> 16) & 0x1F) as u8)
-            .with_a(((iss >> 21) & 1) != 0)
-            .with_b((iss >> 22) & 1 != 0)
-            .with_c((iss >> 23) & 1 != 0)
-            .with_d((iss >> 24) & 1 != 0)
+            .with_a(((iss >> 21) & 0x1) != 0)
+            .with_b(((iss >> 22) & 0x1) != 0)
+            .with_c(((iss >> 23) & 0x1) != 0)
+            .with_d(((iss >> 24) & 0x1) != 0)
             .with_iss2((val >> 27) as u8)
     }
 }
@@ -362,10 +362,10 @@ impl From<IssInstructionAbort> for EsrEl2 {
             .with_wnr(((iss >> 6) & 1) != 0)
             .with_mid_iss(((iss >> 7) & 0x1ff) as u16)
             .with_b_srt(((iss >> 16) & 0x1F) as u8)
-            .with_a(((iss >> 21) & 1) != 0)
-            .with_b((iss >> 22) & 1 != 0)
-            .with_c((iss >> 23) & 1 != 0)
-            .with_d((iss >> 24) & 1 != 0)
+            .with_a(((iss >> 21) & 0x1) != 0)
+            .with_b(((iss >> 22) & 0x1) != 0)
+            .with_c(((iss >> 23) & 0x1) != 0)
+            .with_d(((iss >> 24) & 0x1) != 0)
             .with_iss2((val >> 27) as u8)
     }
 }
