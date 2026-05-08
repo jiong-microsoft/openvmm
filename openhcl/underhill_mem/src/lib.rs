@@ -365,7 +365,7 @@ impl MemoryAcceptor {
             GpaVtlPermissions::Cca(_index) => {
                 // CCA: call new ioctl to set perms index
                 self.mshv_vtl
-                    .cca_set_mem_perm(&range)
+                    .rsi_set_mem_perm(GuestVtl::Vtl0, &range)
                     .map_err(|_err| ApplyVtlProtectionsError::Cca { range, vtl: vtl.into() })
             }
         }

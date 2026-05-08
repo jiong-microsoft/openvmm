@@ -104,9 +104,7 @@ pub struct BootInit<'a> {
 }
 
 pub async fn init(params: &Init<'_>) -> anyhow::Result<MemoryMappings> {
-
     let mut validated_ranges = Vec::new();
-    let vtom = params.vtom;
 
     let acceptor = if params.isolation.is_isolated() {
         Some(Arc::new(MemoryAcceptor::new(params.isolation)?))
@@ -237,7 +235,7 @@ pub async fn init(params: &Init<'_>) -> anyhow::Result<MemoryMappings> {
 
     let gm = if hardware_isolated {
         assert!(params.vtl0_alias_map_bit.is_none());
-        let vtom = vtom.unwrap();
+        let vtom = params.vtom.unwrap();
 
         // Create the encrypted mapping with just the lower VTL memory.
         //
@@ -306,8 +304,8 @@ pub async fn init(params: &Init<'_>) -> anyhow::Result<MemoryMappings> {
                 0
             }
             IsolationType::Snp | IsolationType::Cca => {
-                // SNP and CCA have two mappings for each shared page: one below and one
-                // above VTOM. So, unlike for TDX, we could choose to
+                // SNP and CCA have two mappings for each shared page: one below
+                // and one above VTOM. So, unlike for TDX, we could choose to
                 // register memory twice, allowing the kernel to operate on
                 // either shared or encrypted memory. But, for consistency with
                 // TDX, just register the shared mapping.

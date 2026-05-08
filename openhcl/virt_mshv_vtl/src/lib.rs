@@ -35,7 +35,6 @@ cfg_if::cfg_if!(
         use aarch64defs::Vendor;
         pub use crate::processor::mshv::arm64::HypervisorBackedArm64 as HypervisorBacked;
         use crate::processor::mshv::arm64::HypervisorBackedArm64Shared as HypervisorBackedShared;
-        use hcl::ioctl::cca::RsiRealmConfig;
         pub use processor::cca::CcaBacked;
         use processor::cca::CcaBackedShared;
         use safe_intrinsics::read_cntfrq_el0;
@@ -672,6 +671,11 @@ pub struct UhProcessorBox {
 }
 
 impl UhProcessorBox {
+    /// Return the isolation type
+    pub fn get_isolation(&self) -> IsolationType {
+        self.partition.isolation
+    }
+
     /// Returns the VP index.
     pub fn vp_index(&self) -> VpIndex {
         self.vp_info.base.vp_index
@@ -1649,8 +1653,6 @@ pub struct UhProtoPartition<'a> {
     create_partition_available: bool,
     #[cfg(guest_arch = "x86_64")]
     cpuid: virt::CpuidLeafSet,
-    #[cfg(guest_arch = "aarch64")]
-    realm_config: RsiRealmConfig,
 }
 
 impl<'a> UhProtoPartition<'a> {
@@ -1674,9 +1676,6 @@ impl<'a> UhProtoPartition<'a> {
         let sidecar = sidecar_client::SidecarClient::new(driver).map_err(Error::Sidecar)?;
 
         let hcl = Hcl::new(hcl_isolation, sidecar).map_err(Error::Hcl)?;
-
-        #[cfg(guest_arch = "aarch64")]
-        let realm_config = hcl.get_realm_config().map_err(Error::Hcl)?;
 
         // Set the hypercalls that this process will use.
         let mut allowed_hypercalls = vec![
@@ -1759,9 +1758,26 @@ impl<'a> UhProtoPartition<'a> {
             }
             .build()
             .map_err(Error::CvmCpuid)?,
-            IsolationType::Cca | IsolationType::Vbs | IsolationType::None => {
+            IsolationType::Vbs | IsolationType::None => {
                 virt::CpuidLeafSet::new(Vec::new())
             }
+            // Eliminate 'non-exhaustive patterns' compilation warning, we shouldn't reach here for
+            // any arm64 types.
+            IsolationType::Cca => unreachable!()
+        };
+
+        #[cfg(guest_arch = "aarch64")]
+        let params = if params.isolation == IsolationType::Cca && params.vtom.is_none() {
+            // Query vtom from realm config.
+            let realm_config = hcl.get_realm_config().map_err(Error::Hcl)?;
+
+            // Update the final param stored in UhProtoPartition.
+            UhPartitionNewParams {
+                vtom: Some((1 as u64) << (realm_config.ipa_width() - 1)),
+                ..params
+            }
+        } else {
+            params
         };
 
         Ok(UhProtoPartition {
@@ -1772,9 +1788,12 @@ impl<'a> UhProtoPartition<'a> {
             create_partition_available: privs.create_partitions(),
             #[cfg(guest_arch = "x86_64")]
             cpuid,
-            #[cfg(guest_arch = "aarch64")]
-            realm_config,
         })
+    }
+
+    /// Returns the 'vtom' kept inside UhPartitionNewParams.
+    pub fn get_vtom(&self) -> Option<u64> {
+        self.params.vtom
     }
 
     /// Returns whether VSM support will be available to the guest.
@@ -1802,8 +1821,6 @@ impl<'a> UhProtoPartition<'a> {
             create_partition_available: _,
             #[cfg(guest_arch = "x86_64")]
             cpuid,
-            #[cfg(guest_arch = "aarch64")]
-            realm_config: _,
         } = self;
         let isolation = params.isolation;
         let is_hardware_isolated = isolation.is_hardware_isolated();
@@ -2074,13 +2091,6 @@ impl<'a> UhProtoPartition<'a> {
             vps,
         ))
     }
-
-    /// Getter for realm_config
-    #[cfg(guest_arch = "aarch64")]
-    pub fn realm_config(&self) -> RsiRealmConfig {
-        self.realm_config
-    }
-
 }
 
 impl UhPartition {

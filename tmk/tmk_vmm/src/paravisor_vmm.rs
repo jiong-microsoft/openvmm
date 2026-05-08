@@ -43,7 +43,7 @@ impl RunContext<'_> {
             processor_topology: &self.state.processor_topology,
             isolation,
             vtl0_alias_map_bit: None,
-            vtom: Some((1 as u64) << (p.realm_config().ipa_width() - 1)),
+            vtom: p.get_vtom(),
             mem_layout: &self.state.memory_layout,
             complete_memory_layout: &self.state.memory_layout,
             boot_init: None,
@@ -104,21 +104,24 @@ async fn start_vp(
     let vp_thread = std::thread::spawn(move || {
         let pool = pal_uring::IoUringPool::new("vp", 256).unwrap();
         let driver = pool.client().initiator().clone();
-        pool.client().set_idle_task(move |mut control| {
-            async move {
-                #[cfg(guest_arch = "aarch64")]
+        let isolation = vp.get_isolation();
+        match isolation {
+        #[cfg(guest_arch = "aarch64")]
+        virt::IsolationType::Cca =>
+            pool.client().set_idle_task(async move |mut control| {
                 let vp = vp
-                    .bind_processor::<virt_mshv_vtl::CcaBacked>(&driver, Some(&mut control))
-                    .unwrap();
-
-                #[cfg(guest_arch = "x86_64")]
-                let vp = vp
-                    .bind_processor::<virt_mshv_vtl::HypervisorBacked>(&driver, Some(&mut control))
-                    .unwrap();
-
+                .bind_processor::<virt_mshv_vtl::CcaBacked>(&driver, Some(&mut control))
+                .unwrap();
                 runner.build(vp).unwrap().run_vp().await;
-            }
-        });
+                }),
+        _ =>
+            pool.client().set_idle_task(async move |mut control| {
+                let vp = vp
+                .bind_processor::<virt_mshv_vtl::HypervisorBacked>(&driver, Some(&mut control))
+                .unwrap();
+                runner.build(vp).unwrap().run_vp().await;
+                }),
+        }
         pool.run()
     });
     Ok(vp_thread)

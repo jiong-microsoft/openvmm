@@ -20,7 +20,6 @@ use hvdef::HV_PAGE_SIZE;
 use hvdef::HvArm64RegisterName;
 use hvdef::HvRegisterName;
 use hvdef::HvRegisterValue;
-#[cfg(guest_arch = "aarch64")]
 use memory_range::MemoryRange;
 use rsi::RSI_PLANE_ENTER_FLAGS_TRAP_SIMD;
 use rsi::RSI_PLANE_GIC_NUM_LRS;
@@ -367,14 +366,6 @@ impl MshvVtl {
                 .map_err(SetRegError::Ioctl)?;
         }
         Ok(())
-    }
-
-    /// Setter for memory permissions
-    #[cfg(guest_arch = "aarch64")]
-    pub fn cca_set_mem_perm(&self, range: &MemoryRange) -> Result<(), Error> {
-        self
-            .rsi_set_mem_perm(GuestVtl::Vtl0, range)
-            .map_err(Error::VtlMem)
     }
 
     /// Assign given memory range to the VTL.

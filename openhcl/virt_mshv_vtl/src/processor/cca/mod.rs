@@ -270,28 +270,25 @@ impl BackingPrivate for CcaBacked {
                                 .await;
                             } else {
                                 // Handle MMIO read
-                                println!("MMIO read");
                                 todo!();
                             }
                             this.runner.cca_rsi_plane_entry().pc += 4; // Advance PC
                         }
                         ExceptionClass::InstructionAbort => {
                             // Handle instruction abort
-                            println!("instruction abort");
                             todo!();
                         }
                         ExceptionClass::SimdAccess => {
                             this.runner.cca_plane_no_trap_simd();
                         }
                         ExceptionClass::SmcError => {
-                            println!("SMC error");
+                            tracing::warn!("SmcError exception triggered, but not handled");
                         }
                     }
                 }
                 PlaneExitReason::Irq => {
                     // Handle IRQ exit
-                    println!("IRQ exit");
-                    //todo!();
+                    tracing::warn!("IRQ triggered, but not handled");
                 }
             }
         }

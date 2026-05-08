@@ -124,6 +124,7 @@ impl<'a, T: Backing<'a>> ProcessorRunner<'a, T> {
         values: &mut [HvRegisterValue],
     ) -> Result<(), GetRegError> {
         assert_eq!(names.len(), values.len());
+
         if let Some(sidecar) = &mut self.sidecar {
             return sidecar
                 .get_vp_registers(vtl.into(), zerocopy::transmute_ref!(names), values)
@@ -139,7 +140,6 @@ impl<'a, T: Backing<'a>> ProcessorRunner<'a, T> {
                 let mut values: ArrayVec<_, MAX_REGS_PER_HVCALL> = ArrayVec::from_iter(
                     std::iter::repeat_n(FromZeros::new_zeroed(), hv_names.len()),
                 );
-
                 self.hcl
                     .mshv_hvcall
                     .get_vp_registers_hypercall(vtl, hv_names, &mut values)
@@ -591,6 +591,7 @@ impl MshvHvcall {
             )
             .expect("get_vp_registers hypercall should not fail")
         };
+
         // Status must be success with all elements completed
         status.result()?;
         #[cfg(guest_arch = "x86_64")]
