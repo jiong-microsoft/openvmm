@@ -101,7 +101,9 @@ pub fn load_aarch64(
     tmk: &File,
     test: &TestInfo,
 ) -> anyhow::Result<Arc<virt::aarch64::Aarch64InitialRegs>> {
+        println!("{}: {}", file!(), line!());
     let mut loader = vm_loader::Loader::new(guest_memory.clone(), memory_layout, Vtl::Vtl0);
+        println!("{}: {}", file!(), line!());
     let load_info = load_common(
         Some(memory_layout.ram()[0].range.start()),
         &mut loader,
@@ -109,20 +111,25 @@ pub fn load_aarch64(
         test,
     )?;
 
+        println!("{}: {}", file!(), line!());
     let mut import_reg = |reg| {
         loader
             .import_vp_register(reg)
             .context("failed to set register")
     };
 
+        println!("{}: {}", file!(), line!());
     import_reg(loader::importer::Aarch64Register::Pc(load_info.entrypoint))?;
+        println!("{}: {}", file!(), line!());
     import_reg(loader::importer::Aarch64Register::X0(load_info.param))?;
+        println!("{}: {}", file!(), line!());
     let regs = vm_loader::initial_regs::aarch64_initial_regs(
         &loader.initial_regs(),
         caps,
         &processor_topology.vp_arch(VpIndex::BSP),
     );
 
+        println!("{}: {}", file!(), line!());
     Ok(regs)
 }
 
@@ -132,6 +139,7 @@ fn load_common<R: Debug + GuestArch>(
     tmk: &File,
     test: &TestInfo,
 ) -> anyhow::Result<LoadInfo> {
+        println!("{}: {}", file!(), line!());
     let load_info = loader::elf::load_static_elf(
         loader,
         &mut &*tmk,
@@ -143,12 +151,14 @@ fn load_common<R: Debug + GuestArch>(
     )
     .context("failed to load tmk")?;
 
+        println!("{}: {}", file!(), line!());
     let start_input = tmk_protocol::StartInput {
         command: crate::run::COMMAND_ADDRESS,
         test_index: test.index,
     };
 
     let start_input_addr = load_info.next_available_address;
+        println!("{}: {}", file!(), line!());
 
     loader.import_pages(
         start_input_addr >> 12,
@@ -157,6 +167,7 @@ fn load_common<R: Debug + GuestArch>(
         loader::importer::BootPageAcceptance::Exclusive,
         start_input.as_bytes(),
     )?;
+        println!("{}: {}", file!(), line!());
 
     Ok(LoadInfo {
         entrypoint: load_info.entrypoint,

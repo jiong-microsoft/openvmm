@@ -82,20 +82,20 @@ build:
 
         echo "[plane0] start-tmk.sh reached"
 
-        mount -t proc proc /proc 2>/dev/null || true
-        mount -t sysfs sysfs /sys 2>/dev/null || true
-
         mkdir -p /root/mount
         mount -t 9p -o trans=virtio cca_mount /root/mount
-
-        mkdir -p /root/huge
-        mount -t hugetlbfs -o pagesize=32768kB,size=32768kB none /root/huge
 
         cd /root/mount
         export RUST_BACKTRACE=1
 
-        echo "[plane0] Launching tmk_vmm..."
-        exec ./tmk_vmm --hv cca --tmk ./simple_tmk
+        echo "[plane0] 1st run tmk_vmm..."
+        ./tmk_vmm --hv cca --tmk ./simple_tmk
+
+        echo "[plane0] 2nd run tmk_vmm..."
+        ./tmk_vmm --hv cca --tmk ./simple_tmk
+
+        echo "command to run again:"
+        echo "/root/mount/tmk_vmm --hv cca --tmk /root/mount/simple_tmk"
         EOF
 
             chmod 755 "$$GUESTROOT/root/start-tmk.sh"
@@ -123,7 +123,7 @@ build:
             --console virtio \
             --kernel "$$KERNEL" \
             --9p /cca/,cca_mount \
-            -p "console=hvc0 root=/dev/vda2 hugepagesz=32M hugepages=1" \
+            -p "console=hvc0 root=/dev/vda2" \
             --measurement-algo=sha256 \
             --restricted_mem
         SH

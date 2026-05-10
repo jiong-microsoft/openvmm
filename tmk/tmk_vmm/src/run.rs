@@ -248,8 +248,10 @@ impl RunContext<'_> {
     ) -> anyhow::Result<TestResult> {
         let (event_send, mut event_recv) = mesh::channel();
 
+        println!("{}: {}", file!(), line!());
         // Load the TMK.
         let tmk = fs_err::File::open(&self.state.opts.tmk).context("failed to open tmk")?;
+        println!("{}: {}", file!(), line!());
         let regs = {
             #[cfg(guest_arch = "x86_64")]
             {
@@ -275,6 +277,7 @@ impl RunContext<'_> {
             }
         };
 
+        println!("{}: {}", file!(), line!());
         start_vp(
             self,
             RunnerBuilder::new(
@@ -285,6 +288,7 @@ impl RunContext<'_> {
             ),
         )
         .await?;
+        println!("{}: {}", file!(), line!());
 
         let event = event_recv.next().await.unwrap();
         let r = match event {
@@ -498,7 +502,9 @@ pub struct Runner<'a, P> {
 
 impl<P: Processor> Runner<'_, P> {
     pub async fn run_vp(&mut self) {
+        println!("{}: {}", file!(), line!());
         let stop = StopVpSource::new();
+        println!("{}: {}", file!(), line!());
         let Err(err) = self
             .vp
             .run_vp(
@@ -510,6 +516,7 @@ impl<P: Processor> Runner<'_, P> {
                 },
             )
             .await;
+        println!("{}: {}", file!(), line!());
         let regs = self
             .vp
             .access_state(Vtl::Vtl0)
@@ -521,5 +528,6 @@ impl<P: Processor> Runner<'_, P> {
             reason: format!("{:?}", err),
             regs,
         });
+        println!("{}: {}", file!(), line!());
     }
 }

@@ -1993,6 +1993,7 @@ impl<'a> UhProtoPartition<'a> {
             .expect("registering synic intercept cannot fail");
         }
 
+        println!("{}: {}", file!(), line!());
         let cvm_state = if matches!(isolation, IsolationType::Snp | IsolationType::Tdx) {
             let vsm_caps = hcl.get_vsm_capabilities().map_err(Error::GetReg)?;
             let proxy_interrupt_redirect_available =
@@ -2016,9 +2017,11 @@ impl<'a> UhProtoPartition<'a> {
             None
         };
 
+        println!("{}: {}", file!(), line!());
         let lower_vtl_timer_virt_available =
             hcl.supports_lower_vtl_timer_virt() && !params.disable_lower_vtl_timer_virt;
 
+        println!("{}: {}", file!(), line!());
         let backing_shared = BackingShared::new(
             isolation,
             &params,
@@ -2032,6 +2035,7 @@ impl<'a> UhProtoPartition<'a> {
             },
         )?;
 
+        println!("{}: {}", file!(), line!());
         let enter_modes = EnterModes::default();
 
         let partition = Arc::new(UhPartitionInner {
@@ -2068,6 +2072,7 @@ impl<'a> UhProtoPartition<'a> {
             partition.manage_io_port_intercept_region(0, !0, true);
         }
 
+        println!("{}: {}", file!(), line!());
         let vps = params
             .topology
             .vps_arch()
@@ -2076,6 +2081,7 @@ impl<'a> UhProtoPartition<'a> {
                 vp_info,
             })
             .collect();
+        println!("{}: {}", file!(), line!());
 
         Ok((
             UhPartition {

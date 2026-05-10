@@ -1007,8 +1007,10 @@ impl MshvHvcall {
             // representation of an instance the output type, except in the case of hardware
             // isolated VMs where the caller must validate output as needed.
             unsafe {
+                println!(">>> jiong: invoke_hvcall_ioctl {:#x}", call_object.control.into_bits());
                 hcl_hvcall(self.0.as_raw_fd(), &mut call_object)
                     .map_err(HvcallError::HypercallIoctlFailed)?;
+                println!("<<< jiong: invoke_hvcall_ioctl {:#x}", call_object.control.into_bits());
             }
 
             if call_object.status.call_status() == Err(HvError::Timeout).into() {

@@ -224,9 +224,12 @@ impl BackingPrivate for CcaBacked {
         // TODO: CCA: TDX implementation handled "deliverability notifications" here,
         // no clue what they're about, potentially some VBS stuff?
 
+        println!("{}: {}", file!(), line!());
+
         // TODO: CCA: NEXT: move this to `init`?
         this.set_plane_enter();
 
+        println!("{}: {}", file!(), line!());
         // Run the CCA plane.
         // This will return when the plane exits.
         let intercepted = this
@@ -234,6 +237,7 @@ impl BackingPrivate for CcaBacked {
             .run()
             .map_err(|e| dev.fatal_error(CcaRunVpError(e).into()))?;
 
+        println!("{}: {}", file!(), line!());
         // let mut has_intercept = self
         //     .runner
         //     .run()
@@ -242,6 +246,7 @@ impl BackingPrivate for CcaBacked {
         // Preserve the plane context, so we can restore it later.
         this.preserve_plane_context();
 
+        println!("{}: {}", file!(), line!());
         if intercepted {
             // CCA: note, this is a very simplified version of the exit handling,
             // just enough to get the TMK running.

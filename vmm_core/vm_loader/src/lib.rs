@@ -153,9 +153,11 @@ impl<R: Debug + GuestArch> ImageLoad<R> for Loader<'_, R> {
             "importing pages"
         );
 
+        println!("{}: {}", file!(), line!());
         // Track accepted ranges for duplicate imports.
         self.accept_new_range(page_base, page_count, debug_tag, acceptance)?;
 
+        println!("{}: {}", file!(), line!());
         // Page count must be larger or equal to data.
         let size_bytes = (page_count * HV_PAGE_SIZE) as usize;
         let base_addr = page_base * HV_PAGE_SIZE;
@@ -167,11 +169,13 @@ impl<R: Debug + GuestArch> ImageLoad<R> for Loader<'_, R> {
             );
         }
 
+        println!("{}: {}", file!(), line!());
         // Write the contained data.
         self.gm
             .write_at(base_addr, data)
             .context("unable to import data")?;
 
+        println!("{}: {}", file!(), line!());
         // Remaining bytes must be zeroed.
         let remaining = size_bytes - data.len();
         self.gm

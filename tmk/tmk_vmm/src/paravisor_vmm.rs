@@ -39,6 +39,7 @@ impl RunContext<'_> {
         };
         let p = virt_mshv_vtl::UhProtoPartition::new(params, |_| self.state.driver.clone())?;
 
+        println!("{}: {}", file!(), line!());
         let m = underhill_mem::init(&underhill_mem::Init {
             processor_topology: &self.state.processor_topology,
             isolation,
@@ -52,6 +53,7 @@ impl RunContext<'_> {
         })
         .await?;
 
+        println!("{}: {}", file!(), line!());
         let (partition, vps) = p
             .build(UhLateParams {
                 gm: [
@@ -75,8 +77,10 @@ impl RunContext<'_> {
             })
             .await?;
 
+        println!("{}: {}", file!(), line!());
         let partition = Arc::new(partition);
 
+        println!("{}: {}", file!(), line!());
         let mut threads = Vec::new();
         let r = self
             .run(m.vtl0(), partition.caps(), test, async |_this, runner| {
@@ -102,13 +106,18 @@ async fn start_vp(
     mut runner: RunnerBuilder,
 ) -> anyhow::Result<std::thread::JoinHandle<()>> {
     let vp_thread = std::thread::spawn(move || {
+        println!("{}: {}", file!(), line!());
         let pool = pal_uring::IoUringPool::new("vp", 256).unwrap();
+        println!("{}: {}", file!(), line!());
         let driver = pool.client().initiator().clone();
+        println!("{}: {}", file!(), line!());
         let isolation = vp.get_isolation();
+        println!("{}: {}", file!(), line!());
         match isolation {
         #[cfg(guest_arch = "aarch64")]
         virt::IsolationType::Cca =>
             pool.client().set_idle_task(async move |mut control| {
+                println!("{}: {}", file!(), line!());
                 let vp = vp
                 .bind_processor::<virt_mshv_vtl::CcaBacked>(&driver, Some(&mut control))
                 .unwrap();
