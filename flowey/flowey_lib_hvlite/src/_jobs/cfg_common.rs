@@ -48,7 +48,6 @@ impl SimpleFlowNode for Node {
         ctx.import::<flowey_lib_common::download_azcopy::Node>();
         ctx.import::<flowey_lib_common::download_cargo_nextest::Node>();
         ctx.import::<flowey_lib_common::resolve_protoc::Node>();
-        ctx.import::<flowey_lib_common::git_checkout::Node>();
         ctx.import::<flowey_lib_common::install_dist_pkg::Node>();
         ctx.import::<flowey_lib_common::install_dotnet_cli::Node>();
         ctx.import::<flowey_lib_common::install_azure_cli::Node>();
@@ -150,13 +149,6 @@ impl SimpleFlowNode for Node {
                     selections: None,
                 });
             }
-
-            // FUTURE: if we ever spin up a openvmm setup utility - it might be
-            // interesting to distribute a flowey-based tool that also clones
-            // the repo.
-            ctx.config(flowey_lib_common::git_checkout::Config {
-                require_local_clones: Some(true),
-            });
         } else {
             anyhow::bail!("unsupported backend")
         }

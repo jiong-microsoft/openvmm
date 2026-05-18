@@ -10,7 +10,6 @@ use flowey::node::prelude::RustRuntimeServices;
 use flowey::node::prelude::*;
 use std::env;
 use std::path::Path;
-use std::path::PathBuf;
 use std::thread;
 
 const SHRINKWRAP_REPO: &str = "https://git.gitlab.arm.com/tooling/shrinkwrap.git";
@@ -42,35 +41,6 @@ flowey_request! {
 }
 
 new_simple_flow_node!(struct Node);
-
-fn clone_repo(
-    rt: &RustRuntimeServices<'_>,
-    repo_url: &str,
-    target_dir: &Path,
-    branch: Option<&str>,
-    repo_name: &str,
-) -> anyhow::Result<()> {
-    if target_dir.exists() {
-        log::info!(
-            "{} has been installed at {}",
-            repo_name,
-            target_dir.display()
-        );
-        return Ok(());
-    }
-
-    log::info!("Cloning {} to {}", repo_name, target_dir.display());
-
-    if let Some(b) = branch {
-        flowey::shell_cmd!(rt, "git clone --branch {b} {repo_url} {target_dir}").run()?;
-    } else {
-        flowey::shell_cmd!(rt, "git clone {repo_url} {target_dir}").run()?;
-    }
-
-    log::info!("{} has been cloned successfully", repo_name);
-
-    Ok(())
-}
 
 fn enable_kernel_configs(
     rt: &RustRuntimeServices<'_>,
@@ -249,42 +219,73 @@ impl SimpleFlowNode for Node {
 
     fn imports(ctx: &mut ImportCtx<'_>) {
         ctx.import::<crate::git_checkout_openvmm_repo::Node>();
+        ctx.import::<flowey_lib_common::git_checkout::Node>();
     }
 
     fn process_request(request: Self::Request, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
         let Params { test_root, done } = request;
 
         let openvmm_root = ctx.reqv(crate::git_checkout_openvmm_repo::req::GetRepoDir);
+        let plane0_linux = test_root.join("plane0-linux");
+        let shrinkwrap_dir = test_root.join("shrinkwrap");
+
+        ctx.req(flowey_lib_common::git_checkout::Request::RegisterRepo {
+            repo_id: "cca-plane0-linux".into(),
+            repo_src: flowey_lib_common::git_checkout::RepoSource::LocalOnlyNewClone {
+                url: PLANE0_LINUX_REPO.into(),
+                path: plane0_linux.clone(),
+                ignore_existing_clone: true,
+            },
+            allow_persist_credentials: false,
+            depth: None,
+            pre_run_deps: Vec::new(),
+        });
+        let plane0_linux = ctx.reqv(|v| flowey_lib_common::git_checkout::Request::CheckoutRepo {
+            repo_id: ReadVar::from_static("cca-plane0-linux".into()),
+            repo_path: v,
+            persist_credentials: false,
+        });
+
+        ctx.req(flowey_lib_common::git_checkout::Request::RegisterRepo {
+            repo_id: "shrinkwrap".into(),
+            repo_src: flowey_lib_common::git_checkout::RepoSource::LocalOnlyNewClone {
+                url: SHRINKWRAP_REPO.into(),
+                path: shrinkwrap_dir.clone(),
+                ignore_existing_clone: true,
+            },
+            allow_persist_credentials: false,
+            depth: None,
+            pre_run_deps: Vec::new(),
+        });
+        let shrinkwrap_dir = ctx.reqv(|v| flowey_lib_common::git_checkout::Request::CheckoutRepo {
+            repo_id: ReadVar::from_static("shrinkwrap".into()),
+            repo_path: v,
+            persist_credentials: false,
+        });
 
         ctx.emit_rust_step("install cca emulation environment", |ctx| {
             done.claim(ctx);
             let openvmm_root = openvmm_root.claim(ctx);
+            let plane0_linux = plane0_linux.claim(ctx);
+            let shrinkwrap_dir = shrinkwrap_dir.claim(ctx);
             move |rt| {
                 // emulation environment is under 'test_root'
                 fs_err::create_dir_all(&test_root)?;
 
                 // 'shrinkwrap' only build host Linux kernel, plane0 Linux kernel
                 // needs to be downloaded and built separately.
-                let plane0_linux = test_root.join("plane0-linux");
+                let plane0_linux = rt.read(plane0_linux);
                 let plane0_image = plane0_linux
                     .join("arch")
                     .join("arm64")
                     .join("boot")
                     .join("Image");
-                if plane0_linux.exists() {
-                    log::info!(
-                        "plane0 Linux source tree is already installed at: {}",
-                        plane0_linux.display()
-                    );
-                } else {
-                    clone_repo(
-                        rt,
-                        PLANE0_LINUX_REPO,
-                        &plane0_linux,
-                        Some(PLANE0_LINUX_BRANCH),
-                        "plane0 Linux",
-                    )?;
-                }
+                rt.sh.change_dir(&plane0_linux);
+                let plane0_linux_branch_ref = format!(
+                    "refs/heads/{PLANE0_LINUX_BRANCH}:refs/remotes/origin/{PLANE0_LINUX_BRANCH}",
+                );
+                flowey::shell_cmd!(rt, "git fetch origin {plane0_linux_branch_ref}").run()?;
+                flowey::shell_cmd!(rt, "git checkout {PLANE0_LINUX_BRANCH}").run()?;
 
                 // Now check if image has been built
                 if plane0_image.exists() {
@@ -299,28 +300,23 @@ impl SimpleFlowNode for Node {
                 // Install the remaining emulation environment components
                 // using 'shrinkwrap', which leverages YAML to define all required
                 // components. This significantly reduces manual effort and the risk of errors.
-                let shrinkwrap_dir = test_root.join("shrinkwrap");
+                let shrinkwrap_dir = rt.read(shrinkwrap_dir);
                 let venv_dir = shrinkwrap_dir.join("venv");
-                if shrinkwrap_dir.exists() {
-                    log::info!(
-                        "'shrinkwrap' source tree is already installed at: {}",
-                        shrinkwrap_dir.display()
-                    );
+
+                let install_python_deps = if venv_dir.exists() {
+                    false
                 } else {
-                    clone_repo(rt, SHRINKWRAP_REPO, &shrinkwrap_dir, None, "shrinkwrap")?;
+                    log::info!(
+                        "Creating Python virtual environment at {}",
+                        venv_dir.display()
+                    );
+                    flowey::shell_cmd!(rt, "python3 -m venv")
+                        .arg(&venv_dir)
+                        .run()?;
+                    true
+                };
 
-                    // Create venv
-                    if !venv_dir.exists() {
-                        log::info!(
-                            "Creating Python virtual environment at {}",
-                            venv_dir.display()
-                        );
-                        flowey::shell_cmd!(rt, "python3 -m venv")
-                            .arg(&venv_dir)
-                            .run()?;
-                    }
-
-                    // Install packages
+                if install_python_deps {
                     log::info!("Installing Python dependencies...");
                     let pip = venv_dir.join("bin/pip");
 

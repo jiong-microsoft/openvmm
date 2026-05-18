@@ -119,6 +119,7 @@ impl IntoPipeline for CcaTestsCli {
                 .dep_on(
                     |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                         hvlite_repo_source: openvmm_repo.clone(),
+                        allow_local_new_clones: true,
                     },
                 )
                 .dep_on(|_| flowey_lib_hvlite::_jobs::cfg_common::Params {
@@ -181,6 +182,7 @@ impl IntoPipeline for CcaTestsCli {
             .dep_on(
                 |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                     hvlite_repo_source: openvmm_repo.clone(),
+                    allow_local_new_clones: false,
                 },
             )
             .dep_on(|_| flowey_lib_hvlite::_jobs::cfg_common::Params {

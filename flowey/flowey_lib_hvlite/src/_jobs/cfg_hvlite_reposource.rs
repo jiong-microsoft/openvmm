@@ -9,6 +9,7 @@ flowey_request! {
     #[derive(Clone)]
     pub struct Params {
         pub hvlite_repo_source: flowey_lib_common::git_checkout::RepoSource,
+        pub allow_local_new_clones: bool,
     }
 }
 
@@ -23,14 +24,20 @@ impl SimpleFlowNode for Node {
     }
 
     fn process_request(request: Self::Request, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
-        let Params { hvlite_repo_source } = request;
+        let Params {
+            hvlite_repo_source,
+            allow_local_new_clones,
+        } = request;
 
         if matches!(ctx.backend(), FlowBackend::Local) {
             ctx.config(flowey_lib_common::git_checkout::Config {
-                require_local_clones: Some(!matches!(
-                    hvlite_repo_source,
-                    flowey_lib_common::git_checkout::RepoSource::LocalOnlyNewClone { .. }
-                )),
+                require_local_clones: Some(
+                    !allow_local_new_clones
+                        && !matches!(
+                            hvlite_repo_source,
+                            flowey_lib_common::git_checkout::RepoSource::LocalOnlyNewClone { .. }
+                        ),
+                ),
             });
         }
 

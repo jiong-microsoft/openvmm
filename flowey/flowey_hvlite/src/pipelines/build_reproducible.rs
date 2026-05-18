@@ -112,6 +112,7 @@ impl IntoPipeline for BuildReproducibleCli {
         job = job.dep_on(
             |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                 hvlite_repo_source: openvmm_repo_source.clone(),
+                allow_local_new_clones: false,
             },
         );
         job = job.dep_on(|ctx| {

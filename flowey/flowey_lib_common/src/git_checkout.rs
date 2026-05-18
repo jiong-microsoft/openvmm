@@ -656,8 +656,8 @@ impl Node {
                                     if flowey::shell_cmd!(rt, "git status").run().is_ok()
                                         && *ignore_existing_clone
                                     {
-                                        rt.write(repo_path, path);
-                                        return Ok(());
+                                        found_path = Some(path.clone());
+                                        break;
                                     }
                                 }
                                 if let Some(depth_arg) = depth {
