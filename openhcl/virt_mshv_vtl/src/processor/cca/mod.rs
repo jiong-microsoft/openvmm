@@ -354,6 +354,15 @@ impl UhProcessor<'_, CcaBacked> {
         self.runner.cca_sysreg_write(vtl, reg, val)
     }
 
+    fn sysreg_get(
+        &self,
+        vtl: GuestVtl,
+        reg: SystemReg,
+        val: &mut u64,
+    ) -> Result<(), register::GetRegError> {
+        self.runner.cca_sysreg_get(vtl, reg, val)
+    }
+
     fn set_plane_enter(&mut self) {
         self.runner.cca_set_plane_enter();
     }
@@ -509,7 +518,25 @@ impl AccessVpState for UhVpStateAccess<'_, '_, CcaBacked> {
     }
 
     fn system_registers(&mut self) -> Result<vp::SystemRegisters, Self::Error> {
-        Err(vp_state::Error::Unimplemented("system_registers"))
+        let mut vp_regs = vp::SystemRegisters::default();
+
+        let get = |reg: SystemReg, value: &mut u64| {
+            self.vp
+                .sysreg_get(self.vtl, reg, value)
+                .map_err(vp_state::Error::GetRegisters)
+        };
+
+        get(SystemReg::SCTLR, &mut vp_regs.sctlr_el1)?;
+        get(SystemReg::TTBR0_EL1, &mut vp_regs.ttbr0_el1)?;
+        get(SystemReg::TTBR1_EL1, &mut vp_regs.ttbr1_el1)?;
+        get(SystemReg::TCR_EL1, &mut vp_regs.tcr_el1)?;
+        get(SystemReg::ESR_EL1, &mut vp_regs.esr_el1)?;
+        get(SystemReg::FAR_EL1, &mut vp_regs.far_el1)?;
+        get(SystemReg::MAIR_EL1, &mut vp_regs.mair_el1)?;
+        get(SystemReg::ELR_EL1, &mut vp_regs.elr_el1)?;
+        get(SystemReg::VBAR, &mut vp_regs.vbar_el1)?;
+
+        Ok(vp_regs)
     }
 
     fn set_system_registers(&mut self, value: &vp::SystemRegisters) -> Result<(), Self::Error> {

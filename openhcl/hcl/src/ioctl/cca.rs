@@ -191,6 +191,16 @@ impl ProcessorRunner<'_, Cca> {
             .rsi_sysreg_write(vtl, encode_rsi_sysreg(name), value)
     }
 
+    pub fn cca_sysreg_get(
+        &mut self,
+        vtl: GuestVtl,
+        name: SystemReg,
+        value: &mut u64,
+    ) -> Result<(), GetRegError> {
+        self.hcl
+            .rsi_sysreg_get(vtl, encode_rsi_sysreg(name), value)
+    }
+
     /// Update the address of the `plane_run` structure in `mshv_vtl_run.context`.
     pub fn cca_set_plane_enter(&mut self) {
         // SAFETY: the run page is exclusively accessed through `&mut self` while
@@ -412,6 +422,31 @@ impl MshvVtl {
         Ok(())
     }
 
+    pub fn rsi_sysreg_get(
+        &self,
+        vtl: GuestVtl,
+        sysreg: u64,
+        value: &mut u64,
+    ) -> Result<(), GetRegError> {
+        let mut sysreg_get = mshv_rsi_sysreg_write {
+            vtl: vtl.into(),
+            sysreg,
+            value: 0,
+            ..Default::default()
+        };
+
+        unsafe {
+            // hcl_rsi_sysreg_write(self.file.as_raw_fd(), &sysreg_write)
+            //     .map_err(SetRegError::Ioctl)?;
+
+            /// Should call hcl_rsi_sysreg_get(self.file.as_raw_fd(), &sysreg_write);
+            /// ioctl should write back results to the sysreg_get struct and then write the value back to value
+        }
+
+        *value = sysreg_write.value;
+        Ok(())
+    }
+
     /// Assign given memory range to the VTL.
     pub fn rsi_set_mem_perm(&self, vtl: GuestVtl, range: &MemoryRange) -> Result<(), HvError> {
         let set_mem_perm = mshv_rsi_set_mem_perm {
@@ -448,6 +483,15 @@ impl Hcl {
         value: u64,
     ) -> Result<(), SetRegError> {
         self.mshv_vtl.rsi_sysreg_write(vtl, sysreg, value)
+    }
+
+    pub fn rsi_sysreg_get(
+        &self,
+        vtl: GuestVtl,
+        sysreg: u64,
+        value: &mut u64,
+    ) -> Result<(), GetRegError> {
+        self.mshv_vtl.rsi_sysreg_get(vtl, sysreg, value)
     }
 
     /// setting memory permissions
