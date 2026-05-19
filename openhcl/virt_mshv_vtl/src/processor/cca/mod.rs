@@ -205,13 +205,8 @@ impl BackingPrivate for CcaBacked {
     fn init(vp: &mut UhProcessor<'_, Self>) {
         // initialise non-zero registers for plane
         // TODO: CCA: SIMD regs?
-        const SCTLR_EL1_DEFAULT: u64 = 0xC50878;
         const PMCR_EL0_DEFAULT: u64 = 1 << 6;
         const MDSCR_EL1_DEFAULT: u64 = 1 << 11;
-
-        vp.sysreg_write(GuestVtl::Vtl0, SystemReg::SCTLR, SCTLR_EL1_DEFAULT)
-            .map_err(vp_state::Error::SetRegisters)
-            .unwrap();
 
         vp.sysreg_write(GuestVtl::Vtl0, SystemReg::PMCR_EL0, PMCR_EL0_DEFAULT)
             .map_err(vp_state::Error::SetRegisters)
@@ -514,11 +509,39 @@ impl AccessVpState for UhVpStateAccess<'_, '_, CcaBacked> {
     }
 
     fn system_registers(&mut self) -> Result<vp::SystemRegisters, Self::Error> {
-        todo!()
+        Err(vp_state::Error::Unimplemented("system_registers"))
     }
 
-    fn set_system_registers(&mut self, _value: &vp::SystemRegisters) -> Result<(), Self::Error> {
-        todo!()
+    fn set_system_registers(&mut self, value: &vp::SystemRegisters) -> Result<(), Self::Error> {
+        let vp::SystemRegisters {
+            sctlr_el1,
+            ttbr0_el1,
+            ttbr1_el1,
+            tcr_el1,
+            esr_el1,
+            far_el1,
+            mair_el1,
+            elr_el1,
+            vbar_el1,
+        } = *value;
+
+        for (reg, value) in [
+            (SystemReg::SCTLR, sctlr_el1),
+            (SystemReg::TTBR0_EL1, ttbr0_el1),
+            (SystemReg::TTBR1_EL1, ttbr1_el1),
+            (SystemReg::TCR_EL1, tcr_el1),
+            (SystemReg::ESR_EL1, esr_el1),
+            (SystemReg::FAR_EL1, far_el1),
+            (SystemReg::MAIR_EL1, mair_el1),
+            (SystemReg::ELR_EL1, elr_el1),
+            (SystemReg::VBAR, vbar_el1),
+        ] {
+            self.vp
+                .sysreg_write(self.vtl, reg, value)
+                .map_err(vp_state::Error::SetRegisters)?;
+        }
+
+        Ok(())
     }
 }
 
