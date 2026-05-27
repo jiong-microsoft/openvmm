@@ -17,6 +17,7 @@ use crate::UhCvmVpState;
 use crate::UhPartitionInner;
 use crate::processor::InterceptMessageState;
 use aarch64defs::EsrEl2;
+use aarch64defs::HpfarEl2;
 use aarch64defs::IssDataAbort;
 use aarch64defs::SystemReg;
 use aarch64defs::rsi::cca_rsi_plane_exit;
@@ -167,6 +168,10 @@ impl<'a> CcaExit<'a> {
 
     fn far_el2(&self) -> u64 {
         self.0.far_el2
+    }
+
+    fn hpfar_el2(&self) -> HpfarEl2 {
+        self.0.hpfar_el2.into()
     }
 
     fn gpr_or_zero_register(&self, index: u8) -> Option<u64> {
@@ -345,7 +350,10 @@ impl BackingPrivate for CcaBacked {
                         }
                         ExceptionClass::InstructionAbort => {
                             // Handle instruction abort
-                            todo!();
+                            let far = cca_exit.far_el2();
+                            let hpfar = cca_exit.hpfar_el2();
+
+                            // this.partition.gm.
                         }
                         ExceptionClass::SimdAccess => {
                             this.runner.cca_plane_no_trap_simd();
