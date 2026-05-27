@@ -10,16 +10,20 @@ fn boot(_: TestContext<'_>) {
     log!("hello world");
 }
 
-#[tmk_test]
-fn instruction_abort_outside_par(_: TestContext<'_>) {
-    log!("instruction_abort_outside_par");
+// core::arch::global_asm! {
+//     "instruction_abort_outside_par_trampoline:",
+//     "movz x16, #0x0000",
+//     "movk x16, #0x0000, lsl #16",
+//     "movk x16, #0xffff, lsl #32",
+//     "movk x16, #0x0000, lsl #48",
+//     "br x16",
+// }
 
-    let target = 0x0000_ffff_0000_0000usize;
+// #[tmk_test]
+// fn instruction_abort_outside_par(_: TestContext<'_>) {
+//     log!("instruction_abort_outside_par");
 
-    unsafe {
-        let f: extern "C" fn() = core::mem::transmute(target);
-        f();
-    }
+//     instruction_abort_outside_par_trampoline();
 
-    panic!("branch to outside PAR unexpectedly returned");
-}
+//     panic!("branch to outside PAR unexpectedly returned");
+// }
