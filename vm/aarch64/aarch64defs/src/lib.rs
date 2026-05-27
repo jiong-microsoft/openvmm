@@ -181,6 +181,19 @@ pub struct SctlrEl1 {
     pub tidcp: bool,
 }
 
+/// aarch64 HPFAR_EL2
+#[bitfield(u64)]
+#[derive(PartialEq, Eq)]
+pub struct HpfarEl2 {
+    #[bits(4)]
+    pub res0: u8,
+    #[bits(44)]
+    pub fipa: u64,
+    #[bits(15)]
+    pub res1: u32,
+    pub ns: bool,
+}
+
 open_enum! {
     pub enum ExceptionClass: u8 {
         UNKNOWN = 0b000000,
