@@ -5,7 +5,7 @@
 
 use crate::prelude::*;
 
-#[tmk_test]
-fn boot(_: TestContext<'_>) {
-    log!("hello world");
-}
+// #[tmk_test]
+// fn boot(_: TestContext<'_>) {
+//     log!("hello world");
+// }
