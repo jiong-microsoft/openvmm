@@ -502,7 +502,7 @@ impl UhProcessor<'_, CcaBacked> {
         vtl: GuestVtl,
         state: &mut mshv_rsi_get_ipa_state,
     ) -> Result<(), Error::Hcl> {
-        self.runner.cca_ipa_state_read(vtl, state).map_err(Error::Hcl)
+        self.runner.cca_ipa_state_read(vtl, state).map_err(|_| Error::Hcl)
     }
 
     fn set_plane_enter(&mut self) {

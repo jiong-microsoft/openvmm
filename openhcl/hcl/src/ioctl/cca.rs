@@ -11,6 +11,7 @@ use super::MshvVtl;
 use super::NoRunner;
 use super::ProcessorRunner;
 use crate::GuestVtl;
+use crate::ioctl;
 use crate::ioctl::Error;
 use crate::ioctl::GetRegError;
 use crate::ioctl::HvError;
@@ -219,8 +220,8 @@ impl ProcessorRunner<'_, Cca> {
         &self,
         vtl: GuestVtl,
         state: &mut mshv_rsi_get_ipa_state,
-    ) -> Result<(), Error::InvalidRegisterValue> {
-        self.hcl.rsi_get_ipa_state(vtl, state).map_err(Error::InvalidRegisterValue)
+    ) -> Result<(), ioctl::Error> {
+        self.hcl.rsi_get_ipa_state(vtl, state).map_err(|_| Error::InvalidRegisterValue)
     }
 
     /// Update the address of the `plane_run` structure in `mshv_vtl_run.context`.
