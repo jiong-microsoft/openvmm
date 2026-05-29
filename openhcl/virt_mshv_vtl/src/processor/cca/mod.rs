@@ -372,7 +372,7 @@ impl BackingPrivate for CcaBacked {
                             // let cvm_state = backing_shared.cvm_state();
 
                             if let Some(cvm) = backing_shared.cvm_state() {
-                                if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far) {
+                                if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)? {
                                     // will check whether its user executable or kernel executable or neither
                                 }
                             }

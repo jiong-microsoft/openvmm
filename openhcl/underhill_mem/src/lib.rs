@@ -1127,7 +1127,7 @@ impl ProtectIsolatedMemory for HardwareIsolatedMemoryProtector {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn check_vtl0_permissons_enabled(&self, vtl: GuestVtl, gpa: u64) -> bool {
+    fn check_vtl0_permissons_enabled(&self, vtl: GuestVtl, gpa: u64) -> Result<bool, HvError> {
 
         let cond = match vtl {
             GuestVtl::Vtl0 => {
@@ -1146,7 +1146,7 @@ impl ProtectIsolatedMemory for HardwareIsolatedMemoryProtector {
             GuestVtl::Vtl1 => false
         };
 
-        cond
+        Ok(cond)
     }
 
 }
