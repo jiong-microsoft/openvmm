@@ -3,8 +3,6 @@
 
 //! Processor support for CCA Planes.
 
-use std::mem;
-
 use super::BackingSharedParams;
 use super::HardwareIsolatedBacking;
 use super::UhProcessor;
@@ -365,7 +363,7 @@ impl BackingPrivate for CcaBacked {
                                 tracing::warn!(
                                     "CCA InstructionAbort: fetch was outside of PAR"
                                 );
-                                return Err(dev.fatal_error(CcaUnsupportedExit::ExitReason((0)).into()));
+                                return Err(dev.fatal_error(CcaUnsupportedExit::ExitReason(0).into()));
 
                             }
 
@@ -374,7 +372,7 @@ impl BackingPrivate for CcaBacked {
                             let cvm_state = backing_shared.cvm_state();
 
                             if let Some(cvm) = cvm_state {
-                                if(cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)) {
+                                if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far) {
                                     // will check whether its user executable or kernel executable or neither
                                 }
                             }
@@ -385,7 +383,7 @@ impl BackingPrivate for CcaBacked {
 
                             // 3) check whether address is in 'empty' memory - RIPAS_EMPTY
                             // need to add an ioctl and then use function rsi_ipa_state_get()
-                            let plane_state = mshv_rsi_get_ipa_state{ fipa, state: -1};
+                            let plane_state = mshv_rsi_get_ipa_state{ fipa, state: u64::MAX};
                             this.partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
 
                             if plane_state.state == 0 {

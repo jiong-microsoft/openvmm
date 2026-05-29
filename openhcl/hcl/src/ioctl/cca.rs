@@ -480,6 +480,7 @@ impl MshvVtl {
         Ok(())
     }
 
+    /// Get the ipa RIPAS state
     pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
         let _plane = match vtl {
             GuestVtl::Vtl0 => 1,
@@ -488,7 +489,7 @@ impl MshvVtl {
 
         unsafe {
             hcl_rsi_ipa_state_read(self.file.as_raw_fd(), plane_state)
-                .map_err(|_| HvError::InvalidVpState);
+                .map_err(|_| HvError::InvalidVpState)?;
         }
 
         Ok(())
