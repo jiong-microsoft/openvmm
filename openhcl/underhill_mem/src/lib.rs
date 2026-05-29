@@ -1132,7 +1132,7 @@ impl ProtectIsolatedMemory for HardwareIsolatedMemoryProtector {
         let cond = match vtl {
             GuestVtl::Vtl0 => {
                 let gpn = gpa/PAGE_SIZE as u64;
-                let current_perms = self.query_lower_vtl_permissions(vtl, gpn);
+                let current_perms = self.query_lower_vtl_permissions(vtl, gpn)?;
                 // kernel executable
                 if current_perms.into_bits() & (1 << 2) != 0 {
 

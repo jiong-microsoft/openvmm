@@ -356,8 +356,8 @@ impl BackingPrivate for CcaBacked {
                             let fipa = hpfar.fipa() | (far & 0xfff);
 
                             // 1) fetch was from outside PAR
-                            let memory_layout = this.partition.lower_vtl_memory_layout;
-                            let memory_range = memory_layout.ram()[0].range;
+                            let memory_layout = &this.partition.lower_vtl_memory_layout;
+                            let memory_range = &memory_layout.ram()[0].range;
                             if fipa > memory_range.end() || fipa < memory_range.start() {
 
                                 tracing::warn!(
@@ -368,10 +368,10 @@ impl BackingPrivate for CcaBacked {
                             }
 
                             // 2b) for checking permissions
-                            let backing_shared = this.partition.backing_shared;
-                            let cvm_state = backing_shared.cvm_state();
+                            let backing_shared = &this.partition.backing_shared;
+                            // let cvm_state = backing_shared.cvm_state();
 
-                            if let Some(cvm) = cvm_state {
+                            if let Some(cvm) = backing_shared.cvm_state() {
                                 if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far) {
                                     // will check whether its user executable or kernel executable or neither
                                 }
@@ -383,8 +383,8 @@ impl BackingPrivate for CcaBacked {
 
                             // 3) check whether address is in 'empty' memory - RIPAS_EMPTY
                             // need to add an ioctl and then use function rsi_ipa_state_get()
-                            let plane_state = mshv_rsi_get_ipa_state{ fipa, state: u64::MAX};
-                            this.partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
+                            let mut plane_state = mshv_rsi_get_ipa_state{ fipa, state: u64::MAX};
+                            this.partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state)?;
 
                             if plane_state.state == 0 {
                                 println!("state is RIPAS_EMPTY");
