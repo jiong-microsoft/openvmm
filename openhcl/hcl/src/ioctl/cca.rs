@@ -481,7 +481,7 @@ impl MshvVtl {
     }
 
     pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
-        let plane = match vtl {
+        let _plane = match vtl {
             GuestVtl::Vtl0 => 1,
             _ => return Err(HvError::InvalidVtlState)
         };
@@ -494,8 +494,6 @@ impl MshvVtl {
         Ok(())
     }
 
-    /// Read assigned permission of given address.
-    // pub fn rsi_get_mem_perm(&self, vtl: GuestVtl, address: u64) -> Result<>
 }
 
 impl Hcl {
