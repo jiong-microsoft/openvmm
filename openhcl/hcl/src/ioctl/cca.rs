@@ -489,7 +489,7 @@ impl MshvVtl {
 
         unsafe {
             hcl_rsi_ipa_state_read(self.file.as_raw_fd(), plane_state)
-                .map_err(|_| HvError::InvalidVpState)?;
+                .map_err(|_| HvError::InvalidRegisterValue)?;
         }
 
         Ok(())
