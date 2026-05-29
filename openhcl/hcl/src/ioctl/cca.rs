@@ -214,6 +214,15 @@ impl ProcessorRunner<'_, Cca> {
             .rsi_sysreg_read(vtl, encode_rsi_sysreg(name), value)
     }
 
+    /// Get the ipa ripas state from the RMM
+    pub fn cca_ipa_state_read(
+        &self,
+        vtl: GuestVtl,
+        state: &mut mshv_rsi_get_ipa_state,
+    ) -> Result<(), HvError> {
+        self.hcl.rsi_get_ipa_state(vtl, state)
+    }
+
     /// Update the address of the `plane_run` structure in `mshv_vtl_run.context`.
     pub fn cca_set_plane_enter(&mut self) {
         // SAFETY: the run page is exclusively accessed through `&mut self` while

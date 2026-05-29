@@ -380,12 +380,10 @@ impl BackingPrivate for CcaBacked {
                             // 2a) check whether there is a permission fault, with the memory being RIPAS_DEV
                             // arm64_is_protected_mmio function in kernel - need to create ioctl to call
                             // or just use the functions I created rsi_get_ipa_state
-
                             // 3) check whether address is in 'empty' memory - RIPAS_EMPTY
                             // need to add an ioctl and then use function rsi_ipa_state_get()
                             let mut plane_state = mshv_rsi_get_ipa_state{ fipa, state: u64::MAX};
-                            this.partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state)
-                                .map_err(vp_state::Error::GetRegisters);
+                            this.ipa_state_read(vtl, &mut plane_state).map_err(|_err| Error);
 
                             if plane_state.state == 0 {
                                 println!("state is RIPAS_EMPTY");
@@ -497,6 +495,14 @@ impl UhProcessor<'_, CcaBacked> {
         val: &mut u64,
     ) -> Result<(), register::GetRegError> {
         self.runner.cca_sysreg_read(vtl, reg, val)
+    }
+
+    fn ipa_state_read(
+        &self,
+        vtl: GuestVtl,
+        state: &mut mshv_rsi_get_ipa_state,
+    ) -> Result<(), Error> {
+        self.runner.cca_ipa_state_read(vtl, state).map_err(|_err| Error)
     }
 
     fn set_plane_enter(&mut self) {
