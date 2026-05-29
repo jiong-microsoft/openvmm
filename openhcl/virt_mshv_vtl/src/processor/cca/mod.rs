@@ -3,6 +3,8 @@
 
 //! Processor support for CCA Planes.
 
+use std::mem;
+
 use super::BackingSharedParams;
 use super::HardwareIsolatedBacking;
 use super::UhProcessor;
@@ -23,6 +25,7 @@ use aarch64defs::SystemReg;
 use aarch64defs::rsi::cca_rsi_plane_exit;
 use hcl::GuestVtl;
 use hcl::ioctl::cca::Cca;
+use hcl::ioctl::cca::mshv_rsi_get_ipa_state;
 use hcl::ioctl::register;
 use hv1_emulator::hv::ProcessorVtlHv;
 use hv1_emulator::synic::ProcessorSynic;
@@ -352,8 +355,49 @@ impl BackingPrivate for CcaBacked {
                             // Handle instruction abort
                             let far = cca_exit.far_el2();
                             let hpfar = cca_exit.hpfar_el2();
+                            let fipa = hpfar.fipa() | (far & 0xfff);
 
-                            // this.partition.gm.
+                            // 1) fetch was from outside PAR
+                            let memory_layout = this.partition.lower_vtl_memory_layout;
+                            let memory_range = memory_layout.ram()[0].range;
+                            if fipa > memory_range.end() || fipa < memory_range.start() {
+
+                                tracing::warn!(
+                                    "CCA InstructionAbort: fetch was outside of PAR"
+                                );
+                                return Err(dev.fatal_error(CcaUnsupportedExit::ExitReason((0)).into()));
+
+                            }
+
+                            // 2b) for checking permissions
+                            let backing_shared = this.partition.backing_shared;
+                            let cvm_state = backing_shared.cvm_state();
+
+                            if let Some(cvm) = cvm_state {
+                                if(cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)) {
+                                    // will check whether its user executable or kernel executable or neither
+                                }
+                            }
+
+                            // 2a) check whether there is a permission fault, with the memory being RIPAS_DEV
+                            // arm64_is_protected_mmio function in kernel - need to create ioctl to call
+                            // or just use the functions I created rsi_get_ipa_state
+
+                            // 3) check whether address is in 'empty' memory - RIPAS_EMPTY
+                            // need to add an ioctl and then use function rsi_ipa_state_get()
+                            let plane_state = mshv_rsi_get_ipa_state{ fipa, state: -1};
+                            this.partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
+
+                            if plane_state.state == 0 {
+                                println!("state is RIPAS_EMPTY");
+                            }
+
+                            if plane_state.state == 3 {
+                                println!("state is RIPAS_DEV");
+                            }
+
+
+
                         }
                         ExceptionClass::SimdAccess => {
                             this.runner.cca_plane_no_trap_simd();

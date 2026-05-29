@@ -1126,4 +1126,27 @@ impl ProtectIsolatedMemory for HardwareIsolatedMemoryProtector {
         self.vtl1_protections_enabled
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    fn check_vtl0_permissons_enabled(&self, vtl: GuestVtl, gpa: u64) -> bool {
+
+        let cond = match vtl {
+            GuestVtl::Vtl0 => {
+                let gpn = gpa/PAGE_SIZE as u64;
+                let current_perms = self.query_lower_vtl_permissions(vtl, gpn);
+                // kernel executable
+                if current_perms.into_bits() & (1 << 2) != 0 {
+
+                }
+                // user executable
+                if current_perms.into_bits() & (1 << 3) != 0 {
+
+                }
+                true
+            },
+            GuestVtl::Vtl1 => false
+        };
+
+        cond
+    }
+
 }

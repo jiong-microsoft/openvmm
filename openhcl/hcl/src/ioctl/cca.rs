@@ -16,6 +16,7 @@ use crate::ioctl::GetRegError;
 use crate::ioctl::HvError;
 use crate::ioctl::SetRegError;
 use crate::ioctl::ioctls::hcl_realm_config;
+use crate::ioctl::ioctls::hcl_rsi_ipa_state_read;
 use crate::ioctl::ioctls::hcl_rsi_set_mem_perm;
 use crate::ioctl::ioctls::hcl_rsi_sysreg_read;
 use crate::ioctl::ioctls::hcl_rsi_sysreg_write;
@@ -68,6 +69,15 @@ pub struct mshv_rsi_set_mem_perm {
     pub _pad: [u8; 7],
     pub base_addr: u64,
     pub top_addr: u64,
+}
+
+/// CCA:
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+#[expect(missing_docs)]
+pub struct mshv_rsi_get_ipa_state {
+    pub fipa: u64,
+    pub state: u64,
 }
 
 /// SystemReg is following encoding used by MSR/MRS which is different with
@@ -469,6 +479,23 @@ impl MshvVtl {
         }
         Ok(())
     }
+
+    pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
+        let plane = match vtl {
+            GuestVtl::Vtl0 => 1,
+            _ => return Err(HvError::InvalidVtlState)
+        };
+
+        unsafe {
+            hcl_rsi_ipa_state_read(self.file.as_raw_fd(), plane_state)
+                .map_err(|_| HvError::InvalidVpState);
+        }
+
+        Ok(())
+    }
+
+    /// Read assigned permission of given address.
+    // pub fn rsi_get_mem_perm(&self, vtl: GuestVtl, address: u64) -> Result<>
 }
 
 impl Hcl {
@@ -500,5 +527,10 @@ impl Hcl {
     /// setting memory permissions
     pub fn rsi_set_mem_perm(&self, vtl: GuestVtl, range: MemoryRange) -> Result<(), HvError> {
         self.mshv_vtl.rsi_set_mem_perm(vtl, &range)
+    }
+
+    /// getting ipa RIPAS state
+    pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
+        self.mshv_vtl.rsi_get_ipa_state(vtl, plane_state)
     }
 }
