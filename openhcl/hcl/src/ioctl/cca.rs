@@ -220,7 +220,7 @@ impl ProcessorRunner<'_, Cca> {
         &self,
         vtl: GuestVtl,
         state: &mut mshv_rsi_get_ipa_state,
-    ) -> Result<(), ioctl::Error> {
+    ) -> Result<(), Error> {
         self.hcl.rsi_get_ipa_state(vtl, state).map_err(|_| Error::InvalidRegisterValue)
     }
 
