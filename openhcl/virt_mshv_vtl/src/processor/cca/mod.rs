@@ -383,7 +383,7 @@ impl BackingPrivate for CcaBacked {
                             // 3) check whether address is in 'empty' memory - RIPAS_EMPTY
                             // need to add an ioctl and then use function rsi_ipa_state_get()
                             let mut plane_state = mshv_rsi_get_ipa_state{ fipa, state: u64::MAX};
-                            this.ipa_state_read(vtl, &mut plane_state).map_err(|_err| Error);
+                            this.ipa_state_read(GuestVtl::Vtl0, &mut plane_state).map_err(Error::Hcl);
 
                             if plane_state.state == 0 {
                                 println!("state is RIPAS_EMPTY");
@@ -501,8 +501,8 @@ impl UhProcessor<'_, CcaBacked> {
         &self,
         vtl: GuestVtl,
         state: &mut mshv_rsi_get_ipa_state,
-    ) -> Result<(), Error> {
-        self.runner.cca_ipa_state_read(vtl, state).map_err(|_err| Error)
+    ) -> Result<(), Error::Hcl> {
+        self.runner.cca_ipa_state_read(vtl, state).map_err(Error::Hcl)
     }
 
     fn set_plane_enter(&mut self) {

@@ -219,8 +219,8 @@ impl ProcessorRunner<'_, Cca> {
         &self,
         vtl: GuestVtl,
         state: &mut mshv_rsi_get_ipa_state,
-    ) -> Result<(), HvError> {
-        self.hcl.rsi_get_ipa_state(vtl, state)
+    ) -> Result<(), Error::InvalidRegisterValue> {
+        self.hcl.rsi_get_ipa_state(vtl, state).map_err(Error::InvalidRegisterValue)
     }
 
     /// Update the address of the `plane_run` structure in `mshv_vtl_run.context`.
@@ -490,15 +490,11 @@ impl MshvVtl {
     }
 
     /// Get the ipa RIPAS state
-    pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
-        let _plane = match vtl {
-            GuestVtl::Vtl0 => 1,
-            _ => return Err(HvError::InvalidVtlState)
-        };
+    pub fn rsi_get_ipa_state(&self, _vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), Error> {
 
         unsafe {
             hcl_rsi_ipa_state_read(self.file.as_raw_fd(), plane_state)
-                .map_err(|_| HvError::InvalidRegisterValue)?;
+                .map_err(|_| Error::InvalidRegisterValue)?;
         }
 
         Ok(())
@@ -538,7 +534,7 @@ impl Hcl {
     }
 
     /// getting ipa RIPAS state
-    pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), HvError> {
+    pub fn rsi_get_ipa_state(&self, vtl: GuestVtl, plane_state: &mut mshv_rsi_get_ipa_state) -> Result<(), Error> {
         self.mshv_vtl.rsi_get_ipa_state(vtl, plane_state)
     }
 }
