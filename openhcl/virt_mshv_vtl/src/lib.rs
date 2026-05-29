@@ -1614,7 +1614,7 @@ pub trait ProtectIsolatedMemory: Send + Sync {
     fn vtl1_protections_enabled(&self) -> bool;
 
     /// Check whether a given GPN has vtl permissions
-    fn check_vtl0_permissons_enabled(&self, vtl: GuestVtl, gpa: u64) -> bool;
+    fn check_vtl0_permissons_enabled(&self, vtl: GuestVtl, gpa: u64) -> Result<bool, HvError>;
 }
 
 /// Trait for access to TLB flush and lock machinery.
