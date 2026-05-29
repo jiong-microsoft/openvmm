@@ -373,7 +373,7 @@ impl BackingPrivate for CcaBacked {
 
                             if let Some(cvm) = backing_shared.cvm_state() {
                                 if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)
-                                    .map_err(|err| VpHaltReason::TripleFault)? {
+                                    .map_err(|err| VpHaltReason::TripleFault { vtl: hvdef::Vtl::Vtl0 })? {
                                     // will check whether its user executable or kernel executable or neither
                                 }
                             }
