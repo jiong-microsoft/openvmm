@@ -889,8 +889,8 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
             for i in s..=e {
                 let mut plane_state = mshv_rsi_get_ipa_state{fipa: i, state: u64::MAX};
                 let _ = partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
-                if plane_state.state == 0 {
-                    println!("address {} is RIPAS_EMPTY", i);
+                if plane_state.state == 1 {
+                    println!("address {} is RIPAS_RAM", i);
                 }
             }
         }
