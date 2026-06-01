@@ -37,7 +37,7 @@ cfg_if::cfg_if! {
         compile_error!("unsupported guest architecture");
     }
 }
-
+use hcl::ioctl::cca::mshv_rsi_get_ipa_state;
 use super::Error;
 use super::UhPartitionInner;
 use super::UhVpInner;
@@ -880,6 +880,20 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
             },
             backing_shared,
         )?;
+
+        let ram = partition.lower_vtl_memory_layout.ram();
+        for r in ram {
+            let s = r.range.start();
+            let e = r.range.end();
+
+            for i in s..=e {
+                let mut plane_state = mshv_rsi_get_ipa_state{fipa: i, state: u64::MAX};
+                let _ = partition.hcl.rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
+                if plane_state.state == 0 {
+                    println!("address {} is RIPAS_EMPTY", i);
+                }
+            }
+        }
 
         let mut vp = Self {
             partition,
