@@ -94,6 +94,7 @@ pub fn aarch64_initial_regs(
     caps: &virt::aarch64::Aarch64PartitionCapabilities,
     bsp_id: &Aarch64VpInfo,
 ) -> Arc<virt::aarch64::Aarch64InitialRegs> {
+    println!("regs init size {}", init.len());
     let mut regs = Arc::new(virt::aarch64::Aarch64InitialRegs::at_reset(caps, bsp_id));
 
     let state = Arc::get_mut(&mut regs).unwrap();
