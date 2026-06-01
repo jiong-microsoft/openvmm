@@ -148,6 +148,8 @@ fn load_common<R: Debug + GuestArch>(
         test_index: test.index,
     };
 
+    println!("TestInfo: {}, index: {}", test.name, test.index);
+
     let start_input_addr = load_info.next_available_address;
 
     loader.import_pages(
