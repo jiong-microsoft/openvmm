@@ -10,7 +10,9 @@ fn boot(_: TestContext<'_>) {
     log!("hello world");
 }
 
+#[allow(unsafe_code)]
 core::arch::global_asm! {
+    ".global instruction_abort_outside_par_trampoline",
     "instruction_abort_outside_par_trampoline:",
     "movz x16, #0x0000",
     "movk x16, #0x0000, lsl #16",
@@ -19,11 +21,17 @@ core::arch::global_asm! {
     "br x16",
 }
 
+unsafe extern "C" {
+    fn instruction_abort_outside_par_trampoline() -> !;
+}
+
 #[tmk_test]
 fn instruction_abort_outside_par(_: TestContext<'_>) {
     log!("instruction_abort_outside_par");
 
-    instruction_abort_outside_par_trampoline();
+    unsafe {
+        instruction_abort_outside_par_trampoline();
+    }
 
     panic!("branch to outside PAR unexpectedly returned");
 }
