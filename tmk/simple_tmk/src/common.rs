@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 //! Simple tests common to all architectures.
-
+#![allow(unsafe_code)]
 use crate::prelude::*;
 
 #[tmk_test]
@@ -10,7 +10,6 @@ fn boot(_: TestContext<'_>) {
     log!("hello world");
 }
 
-#[allow(unsafe_code)]
 core::arch::global_asm! {
     ".global instruction_abort_outside_par_trampoline",
     "instruction_abort_outside_par_trampoline:",
