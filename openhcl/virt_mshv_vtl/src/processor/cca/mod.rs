@@ -376,17 +376,6 @@ impl BackingPrivate for CcaBacked {
 
                             }
 
-                            // 2b) for checking permissions
-                            let backing_shared = &this.partition.backing_shared;
-                            // let cvm_state = backing_shared.cvm_state();
-
-                            if let Some(cvm) = backing_shared.cvm_state() {
-                                if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)
-                                    .map_err(|err| VpHaltReason::TripleFault { vtl: hvdef::Vtl::Vtl0 })? {
-                                    // will check whether its user executable or kernel executable or neither
-                                }
-                            }
-
                             // 2a) check whether there is a permission fault, with the memory being RIPAS_DEV
                             // arm64_is_protected_mmio function in kernel - need to create ioctl to call
                             // or just use the functions I created rsi_get_ipa_state
@@ -403,6 +392,16 @@ impl BackingPrivate for CcaBacked {
                                 println!("state is RIPAS_DEV");
                             }
 
+                            // 2b) for checking permissions
+                            let backing_shared = &this.partition.backing_shared;
+                            // let cvm_state = backing_shared.cvm_state();
+
+                            if let Some(cvm) = backing_shared.cvm_state() {
+                                if cvm.isolated_memory_protector.check_vtl0_permissons_enabled(GuestVtl::Vtl0, far)
+                                    .map_err(|err| VpHaltReason::TripleFault { vtl: hvdef::Vtl::Vtl0 })? {
+                                    // will check whether its user executable or kernel executable or neither
+                                }
+                            }
 
 
                         }
