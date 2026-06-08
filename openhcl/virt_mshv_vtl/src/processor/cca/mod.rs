@@ -358,11 +358,16 @@ impl BackingPrivate for CcaBacked {
                             // 1) fetch was from outside PAR
                             // let memory_layout = &this.partition.lower_vtl_memory_layout;
                             // let memory_range = &memory_layout.ram()[0].range;
-                            let realm_config = this.partition.hcl.get_realm_config().map_err(Error::Hcl)?;
+                            let realm_config = match this.partition.hcl.get_realm_config() {
+                                Ok(config) => config,
+                                Err(_) => {
+                                    return Ok(());
+                                }
+                            };
                             let ipa_width = realm_config.ipa_width();
                             let par_start = 0u64;
-                            let par_end = (1 << ipa_width) as u64;
-                            if fipa > par_end || fipa < par_start {
+                            let par_end = (1u64 << ipa_width) as u64;
+                            if fipa >= par_end || fipa < par_start {
 
                                 tracing::warn!(
                                     "CCA InstructionAbort: fetch was outside of PAR"
