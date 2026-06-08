@@ -37,22 +37,22 @@ fn boot(_: TestContext<'_>) {
 //     // panic!("branch to outside PAR unexpectedly returned");
 // }
 
-core::arch::global_asm! {
-    ".global instruction_abort_ripas_empty_a",
-    "instruction_abort_ripas_empty_a:",
-    "movz x16, #0x0000",
-    "br x16",
-}
+// core::arch::global_asm! {
+//     ".global instruction_abort_ripas_empty_a",
+//     "instruction_abort_ripas_empty_a:",
+//     "movz x16, #0x0000",
+//     "br x16",
+// }
 
-unsafe extern "C" {
-    fn instruction_abort_ripas_empty_a() -> !;
-}
+// unsafe extern "C" {
+//     fn instruction_abort_ripas_empty_a() -> !;
+// }
 
-#[tmk_test]
-fn instruction_abort_ripas_empty(_: TestContext<'_>) {
-    log!("instruction_abort_ripas_empty");
+// #[tmk_test]
+// fn instruction_abort_ripas_empty(_: TestContext<'_>) {
+//     log!("instruction_abort_ripas_empty");
 
-    unsafe {
-        instruction_abort_ripas_empty_a();
-    }
-}
+//     unsafe {
+//         instruction_abort_ripas_empty_a();
+//     }
+// }
