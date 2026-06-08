@@ -120,6 +120,7 @@ build:
             -p "console=hvc0 root=/dev/vda2" \
             --measurement-algo=sha256 \
             --restricted_mem
+            --dump-dtb /root/kvmtool.dtb
         SH
 
       # =========================
