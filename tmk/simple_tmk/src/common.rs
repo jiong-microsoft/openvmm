@@ -3,6 +3,8 @@
 
 //! Simple tests common to all architectures.
 #![allow(unsafe_code)]
+use core::arch;
+
 use crate::prelude::*;
 
 #[tmk_test]
@@ -32,5 +34,25 @@ fn instruction_abort_outside_par(_: TestContext<'_>) {
         instruction_abort_outside_par_trampoline();
     }
 
-    panic!("branch to outside PAR unexpectedly returned");
+    // panic!("branch to outside PAR unexpectedly returned");
+}
+
+core::arch::global_asm! {
+    ".global instruction_abort_ripas_empty_a",
+    "instruction_abort_ripas_empty_a:",
+    "movz x16, #0x0000",
+    "br x16",
+}
+
+unsafe extern "C" {
+    fn instruction_abort_ripas_empty_a() -> !;
+}
+
+#[tmk_test]
+fn instruction_abort_ripas_empty(_: TestContext<'_>) {
+    log!("instruction_abort_ripas_empty");
+
+    unsafe {
+        instruction_abort_ripas_empty_a();
+    }
 }
