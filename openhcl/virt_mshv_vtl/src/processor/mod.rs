@@ -881,36 +881,36 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
             backing_shared,
         )?;
 
-        const PAGE_SIZE: u64 = 4096;
+        // const PAGE_SIZE: u64 = 4096;
 
-        let ram = partition.lower_vtl_memory_layout.ram();
+        // let ram = partition.lower_vtl_memory_layout.ram();
 
-        for r in ram {
-            let s = r.range.start();
-            let e = r.range.end();
+        // for r in ram {
+        //     let s = r.range.start();
+        //     let e = r.range.end();
 
-            let mut ipa = s;
-            while ipa < e {
-                let mut plane_state = mshv_rsi_get_ipa_state {
-                    fipa: ipa,
-                    state: u64::MAX,
-                };
+        //     let mut ipa = s;
+        //     while ipa < e {
+        //         let mut plane_state = mshv_rsi_get_ipa_state {
+        //             fipa: ipa,
+        //             state: u64::MAX,
+        //         };
 
-                let _ = partition
-                    .hcl
-                    .rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
+        //         let _ = partition
+        //             .hcl
+        //             .rsi_get_ipa_state(GuestVtl::Vtl0, &mut plane_state);
 
-                if plane_state.state == 1 {
-                    println!(
-                        "page {:#x}-{:#x} is RIPAS_RAM",
-                        ipa,
-                        ipa + PAGE_SIZE - 1
-                    );
-                }
+        //         if plane_state.state == 1 {
+        //             println!(
+        //                 "page {:#x}-{:#x} is RIPAS_RAM",
+        //                 ipa,
+        //                 ipa + PAGE_SIZE - 1
+        //             );
+        //         }
 
-                ipa += PAGE_SIZE;
-            }
-        }
+        //         ipa += PAGE_SIZE;
+        //     }
+        // }
 
         let mut vp = Self {
             partition,
