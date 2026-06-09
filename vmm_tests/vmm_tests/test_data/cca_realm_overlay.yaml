@@ -110,7 +110,7 @@ build:
         cd "$$CCA_DIR"
 
         echo "[realm-launch] Launching lkvm..."
-
+        echo "[realm-launch] My changes USED..."
         exec ./lkvm run --realm --disable-sve --irqchip=gicv3-its \
             -c 1 -m 512 \
             --no-pvtime --force-pci \
@@ -120,7 +120,7 @@ build:
             -p "console=hvc0 root=/dev/vda2" \
             --measurement-algo=sha256 \
             --restricted_mem
-            --dump-dtb /root/kvmtool.dtb
+            --dump-dtb /root/mount/kvmtool.dtb
         SH
 
       # =========================
