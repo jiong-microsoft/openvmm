@@ -109,9 +109,20 @@ build:
 
         cd "$$CCA_DIR"
 
-        echo "[realm-launch] Launching lkvm..."
-        echo "[realm-launch] My changes USED..."
-        exec ./lkvm run --realm --disable-sve --irqchip=gicv3-its \
+        # echo "[realm-launch] Launching lkvm..."
+        # echo "[realm-launch] My changes USED..."
+        # exec ./lkvm run --realm --disable-sve --irqchip=gicv3-its \
+        #     -c 1 -m 512 \
+        #     --no-pvtime --force-pci \
+        #     --console virtio \
+        #     --kernel "$$KERNEL" \
+        #     --9p /cca/,cca_mount \
+        #     -p "console=hvc0 root=/dev/vda2" \
+        #     --measurement-algo=sha256 \
+        #     --restricted_mem \
+        #     --dump-dtb /root/mount/kvmtool.dtb
+
+        set -- ./lkvm run --realm --disable-sve --irqchip=gicv3-its \
             -c 1 -m 512 \
             --no-pvtime --force-pci \
             --console virtio \
@@ -121,6 +132,11 @@ build:
             --measurement-algo=sha256 \
             --restricted_mem \
             --dump-dtb /root/mount/kvmtool.dtb
+
+        echo "[realm-launch] exec command:"
+        printf '  %s\n' "$@"
+
+        exec "$@"
         SH
 
       # =========================
