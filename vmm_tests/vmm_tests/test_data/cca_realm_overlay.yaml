@@ -119,7 +119,7 @@ build:
             --9p /cca/,cca_mount \
             -p "console=hvc0 root=/dev/vda2" \
             --measurement-algo=sha256 \
-            --restricted_mem
+            --restricted_mem \
             --dump-dtb /root/mount/kvmtool.dtb
         SH
 
