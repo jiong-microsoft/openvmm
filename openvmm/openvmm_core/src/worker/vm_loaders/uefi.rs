@@ -50,12 +50,7 @@ pub struct UefiLoadSettings {
     pub vmbus: bool,
 }
 
-/// Loads the UEFI firmware.
-///
-/// If `firmware` is `None`, load the embedded firmware.
-pub fn load_uefi(
-    mut firmware: &std::fs::File,
-    gm: &GuestMemory,
+pub fn build_config_blob(
     processor_topology: &ProcessorTopology,
     mem_layout: &MemoryLayout,
     pcie_host_bridges: &[PcieHostBridge],
@@ -65,17 +60,7 @@ pub fn load_uefi(
     srat: &[u8],
     mcfg: Option<&[u8]>,
     pptt: Option<&[u8]>,
-) -> Result<Vec<Register>, Error> {
-    let mut loaded_image;
-    let image = {
-        loaded_image = Vec::new();
-        firmware.rewind().map_err(Error::Firmware)?;
-        firmware
-            .read_to_end(&mut loaded_image)
-            .map_err(Error::Firmware)?;
-        loaded_image.as_slice()
-    };
-
+) -> Result<config::Blob, Error> {
     let mut entropy = [0; 64];
     getrandom::fill(&mut entropy).expect("rng failure");
 
@@ -207,6 +192,47 @@ pub fn load_uefi(
             entries.as_bytes(),
         );
     }
+
+    Ok(cfg)
+}
+
+/// Loads the UEFI firmware.
+///
+/// If `firmware` is `None`, load the embedded firmware.
+pub fn load_uefi(
+    mut firmware: &std::fs::File,
+    gm: &GuestMemory,
+    processor_topology: &ProcessorTopology,
+    mem_layout: &MemoryLayout,
+    pcie_host_bridges: &[PcieHostBridge],
+    load_settings: UefiLoadSettings,
+    chipset_mmio: &ChipsetMmioRanges,
+    madt: &[u8],
+    srat: &[u8],
+    mcfg: Option<&[u8]>,
+    pptt: Option<&[u8]>,
+) -> Result<Vec<Register>, Error> {
+    let mut loaded_image;
+    let image = {
+        loaded_image = Vec::new();
+        firmware.rewind().map_err(Error::Firmware)?;
+        firmware
+            .read_to_end(&mut loaded_image)
+            .map_err(Error::Firmware)?;
+        loaded_image.as_slice()
+    };
+
+    let cfg = build_config_blob(
+        processor_topology,
+        mem_layout,
+        pcie_host_bridges,
+        load_settings,
+        chipset_mmio,
+        madt,
+        srat,
+        mcfg,
+        pptt,
+    )?;
 
     let mut loader = Loader::new(gm.clone(), mem_layout, hvdef::Vtl::Vtl0);
 

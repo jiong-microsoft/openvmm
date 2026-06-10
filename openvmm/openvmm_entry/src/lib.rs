@@ -1027,9 +1027,16 @@ async fn vm_config_from_command_line(
         || serial3_cfg.is_some();
 
     let has_com3 = serial2_cfg.is_some();
+    let igvm_uses_uefi_helper = opt.igvm.is_some()
+        && matches!(
+            opt.igvm_vtl2_relocation_type,
+            openvmm_defs::config::Vtl2BaseAddressType::File
+        );
 
     let mut chipset = VmManifestBuilder::new(
-        if opt.igvm.is_some() {
+        if igvm_uses_uefi_helper {
+            BaseChipsetType::HypervGen2Uefi
+        } else if opt.igvm.is_some() {
             BaseChipsetType::HclHost
         } else if opt.pcat {
             BaseChipsetType::HypervGen1
@@ -1113,7 +1120,7 @@ async fn vm_config_from_command_line(
         EfiDiagnosticsLogLevelCli::Full => EfiDiagnosticsLogLevelType::Full,
     };
 
-    if opt.uefi {
+    if opt.uefi || igvm_uses_uefi_helper {
         let log_level = match efi_diagnostics_log_level {
             EfiDiagnosticsLogLevelType::Default => {
                 firmware_uefi_resources::LogLevel::make_default()
