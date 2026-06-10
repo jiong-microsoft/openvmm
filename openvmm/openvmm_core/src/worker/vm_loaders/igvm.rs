@@ -121,6 +121,44 @@ fn from_igvm_vtl(vtl: igvm::hv_defs::Vtl) -> hvdef::Vtl {
     }
 }
 
+#[derive(Debug)]
+enum ParameterAreaState {
+    /// Parameter area has been declared via a ParameterArea header.
+    Allocated { data: Vec<u8>, max_size: u64 },
+    /// Parameter area inserted and invalid to use.
+    Inserted,
+}
+
+fn import_parameter(
+    parameter_areas: &mut HashMap<u32, ParameterAreaState>,
+    info: &IGVM_VHS_PARAMETER,
+    parameter: &[u8],
+) -> Result<(), Error> {
+    let (parameter_area, max_size) = match *parameter_areas
+        .get_mut(&info.parameter_area_index)
+        .expect("parameter area should be present")
+    {
+        ParameterAreaState::Allocated {
+            ref mut data,
+            max_size,
+        } => (data, max_size),
+        ParameterAreaState::Inserted => panic!("igvmfile is not valid"),
+    };
+    let offset = info.byte_offset as usize;
+    let end_of_parameter = offset + parameter.len();
+
+    if end_of_parameter > max_size as usize {
+        return Err(Error::ParameterTooLarge);
+    }
+
+    if parameter_area.len() < end_of_parameter {
+        parameter_area.resize(end_of_parameter, 0);
+    }
+
+    parameter_area[offset..end_of_parameter].copy_from_slice(parameter);
+    Ok(())
+}
+
 /// Read and parse an IgvmFile from a File. This assumes the file is a VBS IGVM
 /// file.
 pub fn read_igvm_file(mut file: &std::fs::File) -> Result<IgvmFile, Error> {
@@ -492,6 +530,202 @@ fn build_device_tree(params: BuildDeviceTreeParams<'_>) -> Result<Vec<u8>, fdt::
     Ok(buf)
 }
 
+/// Parameters for [`build_device_tree_aarch64`].
+struct BuildAarch64DeviceTreeParams<'a> {
+    processor_topology: &'a ProcessorTopology<Aarch64Topology>,
+    all_ram: &'a [MemoryRangeWithNode],
+    vtl2_protectable_ram: &'a [MemoryRange],
+    vtl2_base_address: Vtl2BaseAddressType,
+    command_line: &'a str,
+    with_vmbus_redirect: bool,
+    entropy: Option<&'a [u8]>,
+    chipset_mmio: ChipsetMmioRanges,
+}
+
+fn build_device_tree_aarch64(
+    params: BuildAarch64DeviceTreeParams<'_>,
+) -> Result<Vec<u8>, fdt::builder::Error> {
+    let BuildAarch64DeviceTreeParams {
+        processor_topology,
+        all_ram,
+        vtl2_protectable_ram,
+        vtl2_base_address,
+        command_line,
+        with_vmbus_redirect,
+        entropy,
+        chipset_mmio,
+    } = params;
+
+    let ChipsetMmioRanges {
+        low: chipset_low_mmio,
+        high: chipset_high_mmio,
+        vtl2: vtl2_chipset_mmio,
+    } = chipset_mmio;
+
+    let mut buf = vec![0; HV_PAGE_SIZE as usize * 256];
+
+    let mut builder = fdt::builder::Builder::new(fdt::builder::BuilderConfig {
+        blob_buffer: buf.as_mut_slice(),
+        string_table_cap: 1024,
+        memory_reservations: &[],
+    })?;
+    let p_address_cells = builder.add_string("#address-cells")?;
+    let p_size_cells = builder.add_string("#size-cells")?;
+    let p_model = builder.add_string("model")?;
+    let p_reg = builder.add_string("reg")?;
+    let p_ranges = builder.add_string("ranges")?;
+    let p_device_type = builder.add_string("device_type")?;
+    let p_status = builder.add_string("status")?;
+    let p_igvm_type = builder.add_string(igvm_defs::dt::IGVM_DT_IGVM_TYPE_PROPERTY)?;
+    let p_compatible = builder.add_string("compatible")?;
+    let p_numa_node_id = builder.add_string("numa-node-id")?;
+    let p_vmbus_connection_id = builder.add_string("microsoft,message-connection-id")?;
+    let p_vtl = builder.add_string(igvm_defs::dt::IGVM_DT_VTL_PROPERTY)?;
+    let p_bootargs = builder.add_string("bootargs")?;
+
+    let mut cpus = builder
+        .start_node("")?
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_str(p_model, "microsoft,hyperv")?
+        .start_node("cpus")?
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 0)?;
+
+    for proc in processor_topology.vps_arch() {
+        let mpidr = u64::from(proc.mpidr);
+        let name = format!("cpu@{mpidr:x}");
+        cpus = cpus
+            .start_node(name.as_ref())?
+            .add_str(p_device_type, "cpu")?
+            .add_str(p_compatible, "arm,arm-v8")?
+            .add_u64(p_reg, mpidr)?
+            .add_u32(p_numa_node_id, proc.base.vnode)?
+            .add_str(p_status, "okay")?
+            .end_node()?;
+    }
+
+    let mut root = cpus.end_node()?;
+
+    let (memory_map, vnodes) = build_memory_map(all_ram, vtl2_protectable_ram);
+
+    for (entry, vnode) in memory_map.iter().zip(vnodes.iter()).rev() {
+        let start_address = entry.starting_gpa_page_number * HV_PAGE_SIZE;
+        let size = entry.number_of_pages * HV_PAGE_SIZE;
+        let name = format!("memory@{:x}", start_address);
+        let mut mem = root.start_node(&name)?;
+        mem = mem.add_str(p_device_type, "memory")?;
+        mem = mem.add_u64_array(p_reg, &[start_address, size])?;
+        mem = mem.add_u32(p_igvm_type, entry.entry_type.0 as u32)?;
+        mem = mem.add_u32(p_numa_node_id, *vnode)?;
+        root = mem.end_node()?;
+    }
+
+    let mut simple_bus = root
+        .start_node("bus")?
+        .add_str(p_compatible, "simple-bus")?
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_prop_array(p_ranges, &[])?;
+
+    let ranges_vtl0: Vec<u64> = [chipset_low_mmio, chipset_high_mmio]
+        .into_iter()
+        .flat_map(|range| [range.start(), range.start(), range.len()])
+        .collect();
+
+    let ranges_vtl2: Vec<u64> = if vtl2_chipset_mmio.is_empty() {
+        vec![]
+    } else {
+        vec![
+            vtl2_chipset_mmio.start(),
+            vtl2_chipset_mmio.start(),
+            vtl2_chipset_mmio.len(),
+        ]
+    };
+
+    let vmbus_vtl0_name = if ranges_vtl0.is_empty() {
+        "vmbus-vtl0".into()
+    } else {
+        format!("vmbus-vtl0@{:x}", ranges_vtl0[0])
+    };
+    let vmbus_vtl0 = simple_bus.start_node(&vmbus_vtl0_name)?;
+    simple_bus = vmbus_vtl0
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_str(p_compatible, "microsoft,vmbus")?
+        .add_u64_array(p_ranges, &ranges_vtl0)?
+        .add_u32(p_vtl, 0)?
+        .add_u32(p_vmbus_connection_id, 1)?
+        .end_node()?;
+
+    let vmbus_vtl2_name = if ranges_vtl2.is_empty() {
+        "vmbus-vtl2".into()
+    } else {
+        format!("vmbus-vtl2@{:x}", ranges_vtl2[0])
+    };
+    let vmbus_vtl2 = simple_bus.start_node(&vmbus_vtl2_name)?;
+    simple_bus = vmbus_vtl2
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_str(p_compatible, "microsoft,vmbus")?
+        .add_u64_array(p_ranges, &ranges_vtl2)?
+        .add_u32(p_vtl, 2)?
+        .add_u32(
+            p_vmbus_connection_id,
+            if with_vmbus_redirect { 0x800074 } else { 4 },
+        )?
+        .end_node()?;
+
+    root = simple_bus.end_node()?;
+
+    root = root
+        .start_node("chosen")?
+        .add_str(p_bootargs, command_line)?
+        .end_node()?;
+
+    let p_memory_allocation_mode = root.add_string("memory-allocation-mode")?;
+    let p_memory_size = root.add_string("memory-size")?;
+    let p_mmio_size = root.add_string("mmio-size")?;
+    let p_vf_keep_alive_devs = root.add_string("device-types")?;
+    let mut openhcl = root.start_node("openhcl")?;
+
+    let memory_allocation_mode = match vtl2_base_address {
+        Vtl2BaseAddressType::Vtl2Allocate { size } => {
+            if let Some(size) = size {
+                openhcl = openhcl.add_u64(p_memory_size, size)?;
+            }
+
+            openhcl = openhcl.add_u64(p_mmio_size, 128 * 1024 * 1024)?;
+
+            "vtl2"
+        }
+        _ => "host",
+    };
+
+    openhcl = openhcl.add_str(p_memory_allocation_mode, memory_allocation_mode)?;
+
+    if let Some(entropy) = entropy {
+        openhcl = openhcl
+            .start_node("entropy")?
+            .add_prop_array(p_reg, &[entropy])?
+            .end_node()?;
+    }
+
+    openhcl = openhcl
+        .start_node("keep-alive")?
+        .add_str(p_vf_keep_alive_devs, "nvme")?
+        .end_node()?;
+
+    root = openhcl.end_node()?;
+
+    let bytes_used = root
+        .end_node()?
+        .build(u64::from(processor_topology.vp_arch(virt::VpIndex::BSP).mpidr) as u32)?;
+    buf.truncate(bytes_used);
+
+    Ok(buf)
+}
+
 #[derive(Clone, Copy)]
 pub struct AcpiTables<'a> {
     pub madt: &'a [u8],
@@ -698,45 +932,7 @@ fn load_igvm_x86(
 
     let mut loader = Loader::new(gm.clone(), mem_layout, max_vtl);
 
-    #[derive(Debug)]
-    enum ParameterAreaState {
-        /// Parameter area has been declared via a ParameterArea header.
-        Allocated { data: Vec<u8>, max_size: u64 },
-        /// Parameter area inserted and invalid to use.
-        Inserted,
-    }
     let mut parameter_areas: HashMap<u32, ParameterAreaState> = HashMap::new();
-
-    // Import a parameter to the given parameter area.
-    let import_parameter = |parameter_areas: &mut HashMap<u32, ParameterAreaState>,
-                            info: &IGVM_VHS_PARAMETER,
-                            parameter: &[u8]|
-     -> Result<(), Error> {
-        let (parameter_area, max_size) = match *parameter_areas
-            .get_mut(&info.parameter_area_index)
-            .expect("parameter area should be present")
-        {
-            ParameterAreaState::Allocated {
-                ref mut data,
-                max_size,
-            } => (data, max_size),
-            ParameterAreaState::Inserted => panic!("igvmfile is not valid"),
-        };
-        let offset = info.byte_offset as usize;
-        let end_of_parameter = offset + parameter.len();
-
-        if end_of_parameter > max_size as usize {
-            // TODO: tracing for which parameter was too big?
-            return Err(Error::ParameterTooLarge);
-        }
-
-        if parameter_area.len() < end_of_parameter {
-            parameter_area.resize(end_of_parameter, 0);
-        }
-
-        parameter_area[offset..end_of_parameter].copy_from_slice(parameter);
-        Ok(())
-    };
 
     // Relocate a given gpa if relocations are enabled, and it falls within the VTL2 relocation region.
     let relocate_gpa = |gpa: u64| -> u64 {
@@ -1271,9 +1467,346 @@ fn build_memory_map(
 
 #[cfg_attr(not(guest_arch = "aarch64"), expect(dead_code))]
 fn load_igvm_aarch64(
-    _params: LoadIgvmParams<'_, Aarch64Topology>,
+    params: LoadIgvmParams<'_, Aarch64Topology>,
 ) -> Result<(Vec<Aarch64Register>, Vec<(MemoryRange, PageVisibility)>), Error> {
-    Err(Error::UnsupportedGuestArch)
+    let LoadIgvmParams {
+        igvm_file,
+        gm,
+        processor_topology,
+        mem_layout,
+        cmdline,
+        acpi_tables,
+        vtl2_base_address,
+        vtl2_framebuffer_gpa_base,
+        vtl2_only,
+        with_vmbus_redirect,
+        com_serial,
+        entropy,
+        chipset_mmio,
+    } = params;
+
+    let ChipsetMmioRanges {
+        low: chipset_low_mmio,
+        high: chipset_high_mmio,
+        ..
+    } = chipset_mmio;
+
+    match vtl2_base_address {
+        Vtl2BaseAddressType::File | Vtl2BaseAddressType::Vtl2Allocate { .. } => {}
+        Vtl2BaseAddressType::Absolute(_) | Vtl2BaseAddressType::MemoryLayout { .. } => {
+            return Err(Error::RelocationNotSupported);
+        }
+    }
+
+    if vtl2_only {
+        return Err(Error::RelocationNotSupported);
+    }
+
+    if com_serial.is_some() {
+        tracing::warn!("COM serial configuration is ignored for AArch64 IGVM loading");
+    }
+
+    // TODO: pass this through an IGVM parameter
+    let cmdline = if let Some(vtl2_framebuffer_gpa_base) = vtl2_framebuffer_gpa_base {
+        format!(
+            "OPENHCL_FRAMEBUFFER_GPA_BASE={} {}",
+            vtl2_framebuffer_gpa_base, cmdline
+        )
+    } else {
+        cmdline.to_string()
+    };
+
+    // The command line is exposed to the guest as a NUL-terminated byte
+    // sequence (via the IGVM CommandLine parameter), so reject any embedded NUL
+    // bytes up front.
+    if let Some(pos) = cmdline.as_bytes().iter().position(|&b| b == 0) {
+        return Err(Error::CommandLineContainsNul(pos));
+    }
+
+    let (mask, max_vtl) = match vbs_platform_header(igvm_file)? {
+        IgvmPlatformHeader::SupportedPlatform(info) => {
+            debug_assert_eq!(info.platform_type, IgvmPlatformType::VSM_ISOLATION);
+            (info.compatibility_mask, info.highest_vtl)
+        }
+    };
+
+    let max_vtl = max_vtl
+        .try_into()
+        .expect("igvm file should be valid after new_from_binary");
+
+    let mut loader = Loader::new(gm.clone(), mem_layout, max_vtl);
+    let mut parameter_areas: HashMap<u32, ParameterAreaState> = HashMap::new();
+
+    // Ensure required memory is present.
+    let required_ram = igvm_file.directives().iter().filter_map(|header| {
+        if let IgvmDirectiveHeader::RequiredMemory {
+            gpa,
+            compatibility_mask: _,
+            number_of_bytes,
+            vtl2_protectable: _,
+        } = *header
+        {
+            Some(MemoryRange::new(gpa..gpa + number_of_bytes as u64))
+        } else {
+            None
+        }
+    });
+
+    let mut all_ram = mem_layout
+        .ram()
+        .iter()
+        .cloned()
+        .chain(
+            mem_layout
+                .vtl2_range()
+                .map(|r| MemoryRangeWithNode { range: r, vnode: 0 }),
+        )
+        .collect::<Vec<_>>();
+
+    all_ram.sort_by_key(|r| r.range.start());
+
+    if let Some(range) = subtract_ranges(required_ram, all_ram.iter().map(|r| r.range)).next() {
+        return Err(Error::MissingRequiredMemory(range));
+    }
+
+    // Anything requested is VTL2 protectable when the IGVM file supplies the
+    // physical location. If OpenHCL allocates its own VTL2 memory, the file does
+    // not define those RAM ranges.
+    let mut vtl2_protectable_ram = match vtl2_base_address {
+        Vtl2BaseAddressType::File => igvm_file
+            .directives()
+            .iter()
+            .filter_map(|header| {
+                if let IgvmDirectiveHeader::RequiredMemory {
+                    gpa,
+                    compatibility_mask: _,
+                    number_of_bytes,
+                    vtl2_protectable: true,
+                } = *header
+                {
+                    Some(MemoryRange::new(gpa..gpa + number_of_bytes as u64))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>(),
+        Vtl2BaseAddressType::Vtl2Allocate { .. } => Vec::new(),
+        Vtl2BaseAddressType::Absolute(_) | Vtl2BaseAddressType::MemoryLayout { .. } => {
+            unreachable!()
+        }
+    };
+
+    // If an extra VTL2 range is provided, add it to the protectable list.
+    if let Some(range) = mem_layout.vtl2_range() {
+        vtl2_protectable_ram.push(range);
+    }
+
+    vtl2_protectable_ram.sort_by_key(|r| r.start());
+
+    let mut page_data = PageDataBuffer::new();
+    for header in igvm_file.directives().iter() {
+        debug_assert!(header.compatibility_mask().unwrap_or(mask) & mask == mask);
+
+        match *header {
+            IgvmDirectiveHeader::PageData {
+                gpa,
+                compatibility_mask: _,
+                flags,
+                data_type,
+                ref data,
+            } => {
+                debug_assert!((data.len() as u64).is_multiple_of(HV_PAGE_SIZE));
+
+                // TODO: only 4k or empty page data supported right now
+                assert!(data.len() as u64 == HV_PAGE_SIZE || data.is_empty());
+
+                let acceptance = match data_type {
+                    IgvmPageDataType::NORMAL => {
+                        if flags.unmeasured() {
+                            BootPageAcceptance::ExclusiveUnmeasured
+                        } else if flags.shared() {
+                            BootPageAcceptance::Shared
+                        } else {
+                            BootPageAcceptance::Exclusive
+                        }
+                    }
+                    // TODO: other data types SNP / TDX only, unsupported
+                    _ => todo!("unsupported IgvmPageDataType"),
+                };
+
+                if data.is_empty() {
+                    page_data.zero(&mut loader, gpa, acceptance, HV_PAGE_SIZE)?;
+                } else {
+                    page_data.append(&mut loader, gpa, acceptance, data)?;
+                }
+            }
+            IgvmDirectiveHeader::ParameterArea {
+                number_of_bytes,
+                parameter_area_index,
+                ref initial_data,
+            } => {
+                debug_assert!(number_of_bytes % HV_PAGE_SIZE == 0);
+                debug_assert!(
+                    initial_data.is_empty() || initial_data.len() as u64 == number_of_bytes
+                );
+
+                // Allocate a new parameter area. It must not be already used.
+                if parameter_areas
+                    .insert(
+                        parameter_area_index,
+                        ParameterAreaState::Allocated {
+                            data: initial_data.clone(),
+                            max_size: number_of_bytes,
+                        },
+                    )
+                    .is_some()
+                {
+                    panic!("IgvmFile is not valid, invalid invariant");
+                }
+            }
+            IgvmDirectiveHeader::VpCount(ref info) => {
+                let proc_count: u32 = processor_topology.vp_count();
+                import_parameter(&mut parameter_areas, info, proc_count.as_bytes())?;
+            }
+            IgvmDirectiveHeader::Srat(ref info) => {
+                import_parameter(&mut parameter_areas, info, acpi_tables.srat)?;
+            }
+            IgvmDirectiveHeader::Madt(ref info) => {
+                import_parameter(&mut parameter_areas, info, acpi_tables.madt)?;
+            }
+            IgvmDirectiveHeader::Slit(ref info) => {
+                if let Some(slit) = acpi_tables.slit {
+                    import_parameter(&mut parameter_areas, info, slit)?;
+                } else {
+                    tracing::warn!("igvm file requested a SLIT, but no SLIT was provided")
+                }
+            }
+            IgvmDirectiveHeader::Pptt(ref info) => {
+                if let Some(pptt) = acpi_tables.pptt {
+                    import_parameter(&mut parameter_areas, info, pptt)?;
+                } else {
+                    tracing::warn!("igvm file requested a PPTT, but no PPTT was provided")
+                }
+            }
+            IgvmDirectiveHeader::MmioRanges(ref info) => {
+                // Convert the chipset MMIO ranges to the IGVM format.
+                let mmio_ranges = IGVM_VHS_MMIO_RANGES {
+                    mmio_ranges: [
+                        from_memory_range(&chipset_low_mmio),
+                        from_memory_range(&chipset_high_mmio),
+                    ],
+                };
+                import_parameter(&mut parameter_areas, info, mmio_ranges.as_bytes())?;
+            }
+            IgvmDirectiveHeader::MemoryMap(ref info) => {
+                let (memory_map, _) = build_memory_map(&all_ram, &vtl2_protectable_ram);
+                import_parameter(&mut parameter_areas, info, memory_map.as_bytes())?;
+            }
+            IgvmDirectiveHeader::CommandLine(ref info) => {
+                let mut bytes = Vec::with_capacity(cmdline.len() + 1);
+                bytes.extend_from_slice(cmdline.as_bytes());
+                bytes.push(0);
+                import_parameter(&mut parameter_areas, info, &bytes)?;
+            }
+            IgvmDirectiveHeader::DeviceTree(ref info) => {
+                let dt = build_device_tree_aarch64(BuildAarch64DeviceTreeParams {
+                    processor_topology,
+                    all_ram: &all_ram,
+                    vtl2_protectable_ram: &vtl2_protectable_ram,
+                    vtl2_base_address,
+                    command_line: &cmdline,
+                    with_vmbus_redirect,
+                    entropy,
+                    chipset_mmio,
+                })
+                .map_err(Error::DeviceTree)?;
+                import_parameter(&mut parameter_areas, info, &dt)?;
+            }
+            IgvmDirectiveHeader::RequiredMemory {
+                gpa,
+                compatibility_mask: _,
+                number_of_bytes,
+                vtl2_protectable,
+            } => {
+                let memory_type = if vtl2_protectable {
+                    StartupMemoryType::Vtl2ProtectableRam
+                } else {
+                    StartupMemoryType::Ram
+                };
+
+                loader
+                    .verify_startup_memory_available(
+                        gpa / HV_PAGE_SIZE,
+                        number_of_bytes as u64 / HV_PAGE_SIZE,
+                        memory_type,
+                    )
+                    .map_err(Error::Loader)?;
+            }
+            IgvmDirectiveHeader::EnvironmentInfo(ref info) => {
+                let environment_info =
+                    igvm_defs::IgvmEnvironmentInfo::new().with_memory_is_shared(false);
+                import_parameter(&mut parameter_areas, info, environment_info.as_bytes())?;
+            }
+            IgvmDirectiveHeader::AArch64VbsVpContext {
+                vtl,
+                ref registers,
+                compatibility_mask: _,
+            } => {
+                if from_igvm_vtl(vtl) != max_vtl {
+                    return Err(Error::LowerVtlContext);
+                }
+
+                for reg in registers.iter().map(|igvm_reg| {
+                    let reg: Aarch64Register = (*igvm_reg).into();
+                    reg
+                }) {
+                    loader.import_vp_register(reg).map_err(Error::Loader)?;
+                }
+            }
+            IgvmDirectiveHeader::ParameterInsert(IGVM_VHS_PARAMETER_INSERT {
+                gpa,
+                compatibility_mask: _,
+                parameter_area_index,
+            }) => {
+                // Preserve order of import page calls.
+                page_data.flush(&mut loader)?;
+
+                debug_assert!(gpa % HV_PAGE_SIZE == 0);
+
+                let area = parameter_areas
+                    .get_mut(&parameter_area_index)
+                    .expect("igvmfile should be valid");
+                match std::mem::replace(area, ParameterAreaState::Inserted) {
+                    ParameterAreaState::Allocated { data, max_size } => loader
+                        .import_pages(
+                            gpa / HV_PAGE_SIZE,
+                            max_size / HV_PAGE_SIZE,
+                            "igvm-parameter",
+                            BootPageAcceptance::ExclusiveUnmeasured,
+                            &data,
+                        )
+                        .map_err(Error::Loader)?,
+                    ParameterAreaState::Inserted => panic!("igvmfile is invalid, multiple insert"),
+                }
+            }
+            IgvmDirectiveHeader::SnpVpContext { .. } => todo!("snp not supported"),
+            IgvmDirectiveHeader::SnpIdBlock { .. } => todo!("snp not supported"),
+            IgvmDirectiveHeader::VbsMeasurement { .. } => todo!("vbs not supported"),
+            IgvmDirectiveHeader::X64VbsVpContext { .. } => {
+                return Err(Error::UnsupportedGuestArch);
+            }
+            IgvmDirectiveHeader::ErrorRange { .. } => {
+                todo!("Error Range not supported")
+            }
+            IgvmDirectiveHeader::X64NativeVpContext { .. } => {
+                return Err(Error::UnsupportedGuestArch);
+            }
+        }
+    }
+
+    page_data.flush(&mut loader)?;
+
+    Ok(loader.initial_regs_and_accepted_ranges())
 }
 
 // Used to reduce calls into `import_pages`.
