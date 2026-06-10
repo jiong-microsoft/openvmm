@@ -2885,9 +2885,8 @@ impl LoadedVmInner {
 
                 // The non-isolated UEFI IGVM file path uses the same fixed UEFI
                 // config GPA as direct UEFI. Supply the config blob OpenVMM
-                // normally builds for direct UEFI, and pass the GPA in R12 if
-                // the IGVM did not already provide that register.
-                #[cfg(guest_arch = "x86_64")]
+                // normally builds for direct UEFI. On x64, also pass the GPA
+                // in R12 if the IGVM did not already provide that register.
                 if matches!(vtl2_base_address, Vtl2BaseAddressType::File) {
                     let uefi_config = super::vm_loaders::uefi::build_config_blob(
                         &self.processor_topology,
@@ -2917,6 +2916,7 @@ impl LoadedVmInner {
                         .write_at(loader::uefi::CONFIG_BLOB_GPA_BASE, &uefi_config.complete())
                         .context("failed to patch UEFI config blob for IGVM")?;
 
+                    #[cfg(guest_arch = "x86_64")]
                     if !regs
                         .iter()
                         .any(|reg| matches!(reg, loader::importer::X86Register::R12(_)))
