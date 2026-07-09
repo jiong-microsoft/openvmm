@@ -724,6 +724,8 @@ pub mod artifacts {
             KVMTOOL_EFI,
             /// kvmtool binary used by the host rootfs to launch the Realm
             LKVM,
+            /// AArch64 UEFI payload packaged as an IGVM file
+            UEFI_IGVM,
         }
     }
 

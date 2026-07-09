@@ -59,9 +59,31 @@ struct Options {
     /// for example.
     #[clap(long)]
     disable_offloads: bool,
-    /// The path to the TMK binary.
+    /// The path to the TMK binary. Exactly one of --tmk and --linux-kernel is required.
     #[clap(long)]
-    tmk: PathBuf,
+    tmk: Option<PathBuf>,
+    /// Direct-boot an AArch64 Linux Image instead of a TMK.
+    #[clap(long, value_name = "IMAGE", conflicts_with = "tmk")]
+    linux_kernel: Option<PathBuf>,
+    /// Initramfs to pass to the directly booted Linux kernel.
+    #[clap(long, value_name = "CPIO", requires = "linux_kernel")]
+    linux_initrd: Option<PathBuf>,
+    /// Command line for the directly booted Linux kernel.
+    #[clap(
+        long,
+        requires = "linux_kernel",
+        default_value = "console=ttyAMA0 rdinit=/init panic=-1 quiet loglevel=0"
+    )]
+    linux_cmdline: String,
+    /// Stop after observing this text on the directly booted Linux console.
+    #[clap(long, value_name = "TEXT", requires = "linux_kernel")]
+    linux_success_marker: Option<String>,
+    /// Write the directly booted Linux serial console to stdout without tracing prefixes.
+    #[clap(long, requires = "linux_kernel")]
+    linux_serial_raw: bool,
+    /// Guest RAM size in MiB. Defaults to 4 for TMKs and 192 for Linux.
+    #[clap(long, value_name = "MIB")]
+    memory_mb: Option<u64>,
     /// List tests available in the TMK.
     #[clap(long)]
     list: bool,
@@ -95,6 +117,28 @@ enum HypervisorOpt {
 
 impl Options {
     fn finalize(mut self) -> Result<Self> {
+        if self.tmk.is_some() == self.linux_kernel.is_some() {
+            anyhow::bail!("exactly one of --tmk and --linux-kernel must be specified");
+        }
+
+        if self.linux_kernel.is_some() {
+            #[cfg(not(guest_arch = "aarch64"))]
+            anyhow::bail!("--linux-kernel is only supported by the AArch64 tmk_vmm build");
+
+            #[cfg(guest_arch = "aarch64")]
+            {
+                if self.linux_initrd.is_none() {
+                    anyhow::bail!("--linux-initrd is required with --linux-kernel");
+                }
+                if self.list || !self.tests.is_empty() {
+                    anyhow::bail!("--list and TMK test names cannot be used with --linux-kernel");
+                }
+                if self.memory_mb.is_some_and(|memory_mb| memory_mb < 64) {
+                    anyhow::bail!("--memory-mb must be at least 64 for direct Linux boot");
+                }
+            }
+        }
+
         let hv = match self.hv {
             Some(hv) => hv,
             None => choose_hypervisor()?,
@@ -110,7 +154,8 @@ async fn do_main(driver: DefaultDriver) -> Result<()> {
     let opts = Options::parse();
 
     if opts.list {
-        let tmk = fs_err::File::open(&opts.tmk).context("failed to open TMK")?;
+        let tmk_path = opts.tmk.as_ref().context("--list requires --tmk")?;
+        let tmk = fs_err::File::open(tmk_path).context("failed to open TMK")?;
         let tests = load::enumerate_tests(&tmk)?;
         for test in tests {
             println!("{}", test.name);

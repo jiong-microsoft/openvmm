@@ -64,6 +64,10 @@ impl petri_artifacts_core::ResolveTestArtifact for OpenvmmKnownPathsTestArtifact
             _ if id == common::TEST_LOG_DIRECTORY => test_log_directory_path(self.0),
 
             _ if id == OPENVMM_NATIVE => openvmm_native_executable_path(),
+            _ if id == OPENVMM_LINUX_AARCH64 =>
+                env_path_or(OPENVMM_CCA_OPENVMM_ENV_VAR, || {
+                    cca_openvmm_linux_aarch64_path()
+                }),
             #[cfg(target_os = "linux")]
             _ if id == OPENVMM_VHOST_NATIVE => openvmm_vhost_native_executable_path(),
 
@@ -152,6 +156,7 @@ impl petri_artifacts_core::ResolveTestArtifact for OpenvmmKnownPathsTestArtifact
             _ if id == cca::PLANE0_LINUX_IMAGE => cca_plane0_linux_image_path(),
             _ if id == cca::KVMTOOL_EFI => cca_package_path("KVMTOOL_EFI.fd", "CCA kvmtool EFI firmware"),
             _ if id == cca::LKVM => cca_package_path("lkvm", "CCA lkvm"),
+            _ if id == cca::UEFI_IGVM => cca_uefi_igvm_path(),
 
             _ if id == vmgstool::VMGSTOOL_NATIVE => vmgstool_native_executable_path(),
             _ if id == vmgstool::VMGSTOOL_DEV_NATIVE => vmgstool_dev_native_executable_path(),
@@ -374,6 +379,29 @@ fn openvmm_native_executable_path() -> anyhow::Result<PathBuf> {
     get_output_executable_path("openvmm")
 }
 
+/// Path to the aarch64 OpenVMM executable used by the CCA runtime test.
+fn cca_openvmm_linux_aarch64_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = try_get_path("target/aarch64-unknown-linux-gnu/debug", "openvmm")? {
+        return Ok(path);
+    }
+
+    if let Some(path) = flowey_built_executable_path(
+        "target/openvmm/aarch64-unknown-linux-gnu/debug/deps",
+        "openvmm",
+    )? {
+        return Ok(path);
+    }
+
+    get_path(
+        "target/openvmm/aarch64-unknown-linux-gnu/debug/deps",
+        "openvmm",
+        MissingCommand::XFlowey {
+            description: "CCA aarch64 OpenVMM binary",
+            xflowey_args: &["cca-tests", "--build-only"],
+        },
+    )
+}
+
 /// Path to the output location of the openvmm_vhost executable.
 #[cfg(target_os = "linux")]
 fn openvmm_vhost_native_executable_path() -> anyhow::Result<PathBuf> {
@@ -456,6 +484,8 @@ fn virtio_win_path() -> anyhow::Result<PathBuf> {
 }
 
 const OPENVMM_CCA_TEST_ROOT_ENV_VAR: &str = "OPENVMM_CCA_TEST_ROOT";
+const OPENVMM_CCA_OPENVMM_ENV_VAR: &str = "OPENVMM_CCA_OPENVMM";
+const OPENVMM_CCA_UEFI_IGVM_ENV_VAR: &str = "OPENVMM_CCA_UEFI_IGVM";
 const OPENVMM_CCA_TMK_VMM_ENV_VAR: &str = "OPENVMM_CCA_TMK_VMM";
 const OPENVMM_CCA_SIMPLE_TMK_ENV_VAR: &str = "OPENVMM_CCA_SIMPLE_TMK";
 
@@ -518,6 +548,19 @@ fn cca_package_path(file_name: &'static str, description: &'static str) -> anyho
         file_name,
         cca_missing_command(description),
     )
+}
+
+fn cca_uefi_igvm_path() -> anyhow::Result<PathBuf> {
+    env_path_or(OPENVMM_CCA_UEFI_IGVM_ENV_VAR, || {
+        get_path(
+            "flowey-out/artifacts/build-igvm/debug/uefi-aarch64-custom",
+            "openhcl-uefi-aarch64-custom.bin",
+            MissingCommand::Custom {
+                description: "CCA AArch64 UEFI IGVM",
+                cmd: "cargo xflowey cca-tests --custom-uefi PATH_TO_MSVM_FD",
+            },
+        )
+    })
 }
 
 fn cca_buildroot_host_sbin_path(

@@ -31,6 +31,7 @@ pub mod build_test_igvm_agent_rpc_server;
 pub mod build_tmk_vmm;
 pub mod build_tmks;
 pub mod build_tpm_guest_tests;
+pub mod build_uefi_igvm;
 pub mod build_vmfirmwareigvm_dll;
 pub mod build_vmgstool;
 pub mod build_xtask;

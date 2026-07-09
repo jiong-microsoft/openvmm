@@ -29,6 +29,8 @@ use hv1_structs::VtlArray;
 use hvdef::HvRegisterCrInterceptControl;
 use inspect::Inspect;
 use inspect::InspectMut;
+use parking_lot::Mutex;
+use std::collections::BTreeSet;
 use virt::VpHaltReason;
 use virt::VpIndex;
 use virt::aarch64::vp;
@@ -49,9 +51,26 @@ enum CcaUnsupportedExit {
     ExceptionClass { exception_class: u8, esr_el2: u64 },
     #[error("CCA data abort with invalid instruction syndrome in ESR_EL2 {0:#x}")]
     InvalidDataAbortIss(u64),
+    #[error("no free GIC list register for virtual interrupt {0}")]
+    NoFreeGicListRegister(u32),
 }
 
 const AARCH64_ZERO_REGISTER_INDEX: u8 = 31;
+const CNTV_CTL_ENABLE: u64 = 1 << 0;
+const CNTV_CTL_IMASK: u64 = 1 << 1;
+const CNTV_CTL_ISTATUS: u64 = 1 << 2;
+
+const ICH_LR_VINTID_MASK: u64 = u32::MAX as u64;
+const ICH_LR_PRIORITY_SHIFT: u32 = 48;
+const ICH_LR_GROUP1: u64 = 1 << 60;
+const ICH_LR_PENDING: u64 = 1 << 62;
+const ICH_LR_STATE_MASK: u64 = 3 << 62;
+const DEFAULT_GIC_PRIORITY: u8 = 0x80;
+const RSI_PLANE_EXIT_INVALID: u64 = u64::MAX;
+const HPFAR_EL2_FIPA_SHIFT: u32 = 4;
+const HPFAR_EL2_FIPA_WIDTH: u32 = 40;
+const PAGE_SHIFT: u32 = 12;
+const PAGE_OFFSET_MASK: u64 = (1 << PAGE_SHIFT) - 1;
 
 // For use with Hyper-V synthetic interrupt controller allocated by paravisor.
 enum UhDirectOverlay {
@@ -95,13 +114,31 @@ impl CcaVtl {
 #[derive(Inspect)]
 pub struct CcaBackedShared {
     pub(crate) cvm: UhCvmPartitionState,
+    virt_timer_ppi: u32,
+    #[inspect(skip)]
+    pending_spis: Mutex<BTreeSet<u32>>,
 }
 
 impl CcaBackedShared {
-    pub(crate) fn new(params: BackingSharedParams<'_>) -> Result<Self, Error> {
+    pub(crate) fn new(params: BackingSharedParams<'_>, virt_timer_ppi: u32) -> Result<Self, Error> {
         Ok(Self {
             cvm: params.cvm_state.unwrap(),
+            virt_timer_ppi,
+            pending_spis: Mutex::new(BTreeSet::new()),
         })
+    }
+
+    pub(crate) fn set_spi_irq(&self, intid: u32, asserted: bool) -> bool {
+        let mut pending = self.pending_spis.lock();
+        if asserted {
+            pending.insert(intid)
+        } else {
+            pending.remove(&intid)
+        }
+    }
+
+    fn pending_spi(&self) -> Option<u32> {
+        self.pending_spis.lock().first().copied()
     }
 }
 
@@ -169,12 +206,46 @@ impl<'a> CcaExit<'a> {
         self.0.far_el2
     }
 
+    fn hpfar_el2(&self) -> u64 {
+        self.0.hpfar_el2
+    }
+
     fn gpr_or_zero_register(&self, index: u8) -> Option<u64> {
         match index {
             AARCH64_ZERO_REGISTER_INDEX => Some(0),
             index => self.0.gprs.get(usize::from(index)).copied(),
         }
     }
+
+    fn virtual_timer_asserted(&self) -> bool {
+        self.0.cntv_ctl_el0 & (CNTV_CTL_ENABLE | CNTV_CTL_IMASK | CNTV_CTL_ISTATUS)
+            == CNTV_CTL_ENABLE | CNTV_CTL_ISTATUS
+    }
+}
+
+fn fault_ipa(far_el2: u64, hpfar_el2: u64) -> u64 {
+    let fipa_mask = (1 << HPFAR_EL2_FIPA_WIDTH) - 1;
+    let fipa = (hpfar_el2 >> HPFAR_EL2_FIPA_SHIFT) & fipa_mask;
+    (fipa << PAGE_SHIFT) | (far_el2 & PAGE_OFFSET_MASK)
+}
+
+fn inject_virtual_interrupt(lrs: &mut [u64], intid: u32) -> bool {
+    if lrs
+        .iter()
+        .any(|lr| *lr & ICH_LR_STATE_MASK != 0 && *lr & ICH_LR_VINTID_MASK == u64::from(intid))
+    {
+        return true;
+    }
+
+    let Some(lr) = lrs.iter_mut().find(|lr| **lr & ICH_LR_STATE_MASK == 0) else {
+        return false;
+    };
+
+    *lr = u64::from(intid)
+        | (u64::from(DEFAULT_GIC_PRIORITY) << ICH_LR_PRIORITY_SHIFT)
+        | ICH_LR_GROUP1
+        | ICH_LR_PENDING;
+    true
 }
 
 fn extend_mmio_read(data: [u8; size_of::<u64>()], len: usize, sign_extend: bool, sf: bool) -> u64 {
@@ -264,6 +335,12 @@ impl BackingPrivate for CcaBacked {
 
         // TODO: CCA: NEXT: move this to `init`?
         this.set_plane_enter();
+        this.runner.cca_rsi_plane_run_mut().exit.exit_reason = RSI_PLANE_EXIT_INVALID;
+        if let Some(intid) = this.shared.pending_spi()
+            && !inject_virtual_interrupt(&mut this.runner.cca_rsi_plane_entry().gicv3_lrs, intid)
+        {
+            return Err(dev.fatal_error(CcaUnsupportedExit::NoFreeGicListRegister(intid).into()));
+        }
 
         // Run the CCA plane.
         // This will return when the plane exits.
@@ -272,10 +349,10 @@ impl BackingPrivate for CcaBacked {
             .run()
             .map_err(|e| dev.fatal_error(CcaRunVpError(e).into()))?;
 
-        // Preserve the plane context, so we can restore it later.
-        this.preserve_plane_context();
+        if intercepted && this.runner.cca_rsi_plane_exit().exit_reason != RSI_PLANE_EXIT_INVALID {
+            // Preserve the plane context, so we can restore it later.
+            this.preserve_plane_context();
 
-        if intercepted {
             // CCA: note, this is a very simplified version of the exit handling,
             // just enough to get the TMK running.
             // TODO: CCA: NEXT: document how we integrate with the wider emulation
@@ -287,8 +364,9 @@ impl BackingPrivate for CcaBacked {
                 PlaneExitReason::Sync => {
                     match cca_exit.esr_el2_class() {
                         ExceptionClass::DataAbort => {
-                            // get the address that caused the data abort
-                            let address = cca_exit.far_el2();
+                            // FAR_EL2 is the lower VTL's virtual address. HPFAR_EL2
+                            // identifies the faulting IPA page for a stage-2 abort.
+                            let address = fault_ipa(cca_exit.far_el2(), cca_exit.hpfar_el2());
                             let iss = IssDataAbort::from(esr_el2.iss());
                             if !iss.isv() {
                                 tracing::warn!(
@@ -370,8 +448,20 @@ impl BackingPrivate for CcaBacked {
                     }
                 }
                 PlaneExitReason::Irq => {
-                    // Handle IRQ exit
-                    tracing::warn!("IRQ triggered, but not handled");
+                    if cca_exit.virtual_timer_asserted() {
+                        let intid = this.shared.virt_timer_ppi;
+                        if !inject_virtual_interrupt(
+                            &mut this.runner.cca_rsi_plane_entry().gicv3_lrs,
+                            intid,
+                        ) {
+                            return Err(dev.fatal_error(
+                                CcaUnsupportedExit::NoFreeGicListRegister(intid).into(),
+                            ));
+                        }
+                        tracing::debug!(intid, "injected CCA virtual timer interrupt");
+                    } else {
+                        tracing::trace!("CCA IRQ exit had no asserted virtual timer");
+                    }
                 }
                 PlaneExitReason::Unknown(exit_reason) => {
                     tracing::warn!(exit_reason, "unsupported CCA plane exit reason");
@@ -465,8 +555,15 @@ impl UhProcessor<'_, CcaBacked> {
         // Set the PC to the ELR_EL2 value from the exit context.
         plane_run.entry.pc = plane_run.exit.elr_el2;
 
-        // Set GICv3 HCR to the value from the exit context.
+        // Restore the interrupted PSTATE, including the IRQ mask.
+        plane_run.entry.pstate = plane_run.exit.pstate;
+
+        // Preserve the virtual GIC state across plane exits.
         plane_run.entry.gicv3_hcr = plane_run.exit.gicv3_hcr;
+        plane_run
+            .entry
+            .gicv3_lrs
+            .copy_from_slice(&plane_run.exit.gicv3_lrs);
     }
 
     // TODO: CCA: lots of stuff might be needed based on the TDX implementation, something akin to:
@@ -785,6 +882,63 @@ impl TlbFlushLockAccess for CcaTlbLockFlushAccess<'_> {
 
     fn set_wait_for_tlb_locks(&mut self, _vtl: GuestVtl) {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DEFAULT_GIC_PRIORITY;
+    use super::ICH_LR_GROUP1;
+    use super::ICH_LR_PENDING;
+    use super::ICH_LR_PRIORITY_SHIFT;
+    use super::fault_ipa;
+    use super::inject_virtual_interrupt;
+
+    #[test]
+    fn reconstructs_fault_ipa_from_hpfar_and_far() {
+        let ipa = 0xeffe_c018;
+        let hpfar_el2 = (ipa & !0xfff) >> 8;
+        let far_el2 = 0xffff_ffff_ff5f_d018;
+
+        assert_eq!(fault_ipa(far_el2, hpfar_el2), ipa);
+    }
+
+    #[test]
+    fn injects_pending_group1_virtual_interrupt() {
+        let mut lrs = [0; 4];
+        let intid = 27;
+
+        assert!(inject_virtual_interrupt(&mut lrs, intid));
+        assert_eq!(
+            lrs[0],
+            u64::from(intid)
+                | (u64::from(DEFAULT_GIC_PRIORITY) << ICH_LR_PRIORITY_SHIFT)
+                | ICH_LR_GROUP1
+                | ICH_LR_PENDING
+        );
+        assert_eq!(lrs[1..], [0; 3]);
+    }
+
+    #[test]
+    fn does_not_duplicate_pending_virtual_interrupt() {
+        let mut lrs = [0; 4];
+        let intid = 27;
+
+        assert!(inject_virtual_interrupt(&mut lrs, intid));
+        let injected_lr = lrs[0];
+        assert!(inject_virtual_interrupt(&mut lrs, intid));
+
+        assert_eq!(lrs[0], injected_lr);
+        assert_eq!(lrs[1..], [0; 3]);
+    }
+
+    #[test]
+    fn reports_when_no_list_register_is_free() {
+        let mut lrs = [ICH_LR_PENDING | 1; 4];
+        let original_lrs = lrs;
+
+        assert!(!inject_virtual_interrupt(&mut lrs, 27));
+        assert_eq!(lrs, original_lrs);
     }
 }
 

@@ -6,9 +6,16 @@
 #![forbid(unsafe_code)]
 
 use anyhow::Context as _;
+use nix::sys::termios;
 use std::ffi::OsStr;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::io::Read;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -19,17 +26,34 @@ use std::time::Duration;
 use std::time::Instant;
 
 const CCA_TEST_TIMEOUT: Duration = Duration::from_secs(20 * 60);
-const CCA_TEST_SUCCESS_MARKER: &str = "PASS";
+const CCA_VTL0_TIMER_IRQ_MARKER: &str = "CCA_VTL0_TIMER_IRQ_OK";
+const CCA_VTL0_SHELL_READY_MARKER: &str = "CCA_VTL0_SHELL_READY";
+const CCA_VTL0_SHELL_PROMPT: &str = "/ #";
+const CCA_VTL0_SHELL_COMMAND: &str = "printf 'CCA_VTL0_SHELL_%s_OK\\n' COMMAND";
+const CCA_TEST_SUCCESS_MARKER: &str = "CCA_VTL0_SHELL_COMMAND_OK";
+const CCA_VTL0_INITRAMFS_PATH: &str = "cca/vtl0-initramfs.cpio";
 const CCA_PLANE0_PROMPT: &str = "sh-5.2#";
 const CCA_START_TMK_COMMAND: &str = "/root/busybox sh /root/start-tmk.sh";
+const CCA_PAUSE_BEFORE_START_TMK_ENV: &str = "OPENVMM_CCA_PAUSE_BEFORE_START_TMK";
+const CCA_INTERACTIVE_VTL0_SHELL_ENV: &str = "OPENVMM_CCA_INTERACTIVE_VTL0_SHELL";
+const CCA_PAUSE_CONTINUE_COMMAND: &str = ".continue";
+const CCA_INTERACTIVE_ESCAPE: u8 = 0x1d;
 const CCA_OUTPUT_WINDOW_SIZE: usize = 64 * 1024;
 const CCA_TEST_FAILURE_MARKERS: &[&str] = &[
     "test failed",
     "some tests failed",
     "[realm-launch][ERROR]",
+    "CCA_VTL0_TIMER_SLEEP_FAILED",
+    "CCA_VTL0_CONSOLE_SETUP_FAILED",
+    "CCA_VTL0_SHELL_EXEC_FAILED",
+    "error while loading shared libraries",
+    "Internal error: Oops",
     "Kernel panic",
+    "Segmentation fault",
     "panicked at",
 ];
+const CCA_VTL0_INIT_SOURCE: &[u8] = include_bytes!("../test_data/cca_vtl0_init.c");
+const CCA_VTL0_INIT_SCRIPT: &[u8] = include_bytes!("../test_data/cca_vtl0_init.sh");
 
 struct CcaRuntimeArtifacts {
     shrinkwrap_exe: petri::ResolvedArtifact,
@@ -37,12 +61,13 @@ struct CcaRuntimeArtifacts {
     rootfs_file: petri::ResolvedArtifact,
     e2fsck_bin: petri::ResolvedArtifact,
     resize2fs_bin: petri::ResolvedArtifact,
+    openvmm_bin: petri::ResolvedArtifact,
     tmk_vmm_bin: petri::ResolvedArtifact,
-    simple_tmk_bin: petri::ResolvedArtifact,
     guest_disk: petri::ResolvedArtifact,
     plane0_linux_image: petri::ResolvedArtifact,
     kvmtool_efi: petri::ResolvedArtifact,
     lkvm: petri::ResolvedArtifact,
+    uefi_igvm: petri::ResolvedArtifact,
 }
 
 impl CcaRuntimeArtifacts {
@@ -58,19 +83,20 @@ impl CcaRuntimeArtifacts {
         Ok(())
     }
 
-    fn paths(&self) -> [(&'static str, &Path); 11] {
+    fn paths(&self) -> [(&'static str, &Path); 12] {
         [
             ("cca::SHRINKWRAP", self.shrinkwrap_exe.get()),
             ("cca::VENV", self.venv_dir.get()),
             ("cca::ROOTFS", self.rootfs_file.get()),
             ("cca::E2FSCK", self.e2fsck_bin.get()),
             ("cca::RESIZE2FS", self.resize2fs_bin.get()),
+            ("OPENVMM_LINUX_AARCH64", self.openvmm_bin.get()),
             ("tmks::TMK_VMM_LINUX_AARCH64", self.tmk_vmm_bin.get()),
-            ("tmks::SIMPLE_TMK_AARCH64", self.simple_tmk_bin.get()),
             ("cca::GUEST_DISK", self.guest_disk.get()),
             ("cca::PLANE0_LINUX_IMAGE", self.plane0_linux_image.get()),
             ("cca::KVMTOOL_EFI", self.kvmtool_efi.get()),
             ("cca::LKVM", self.lkvm.get()),
+            ("cca::UEFI_IGVM", self.uefi_igvm.get()),
         ]
     }
 }
@@ -92,11 +118,11 @@ fn resolve_cca_runtime(resolver: &petri::ArtifactResolver<'_>) -> Option<CcaRunt
         resize2fs_bin: resolver
             .require(petri_artifacts_vmm_test::artifacts::cca::RESIZE2FS)
             .erase(),
+        openvmm_bin: resolver
+            .require(petri_artifacts_vmm_test::artifacts::OPENVMM_LINUX_AARCH64)
+            .erase(),
         tmk_vmm_bin: resolver
             .require(petri_artifacts_vmm_test::artifacts::tmks::TMK_VMM_LINUX_AARCH64)
-            .erase(),
-        simple_tmk_bin: resolver
-            .require(petri_artifacts_vmm_test::artifacts::tmks::SIMPLE_TMK_AARCH64)
             .erase(),
         guest_disk: resolver
             .require(petri_artifacts_vmm_test::artifacts::cca::GUEST_DISK)
@@ -109,6 +135,9 @@ fn resolve_cca_runtime(resolver: &petri::ArtifactResolver<'_>) -> Option<CcaRunt
             .erase(),
         lkvm: resolver
             .require(petri_artifacts_vmm_test::artifacts::cca::LKVM)
+            .erase(),
+        uefi_igvm: resolver
+            .require(petri_artifacts_vmm_test::artifacts::cca::UEFI_IGVM)
             .erase(),
     })
 }
@@ -155,6 +184,22 @@ impl PreparedCcaRootfs {
 fn prepare_cca_rootfs(artifacts: &CcaRuntimeArtifacts) -> anyhow::Result<PreparedCcaRootfs> {
     let test_dir = tempfile::tempdir().context("failed to create CCA runtime test directory")?;
     let rootfs_path = test_dir.path().join("rootfs.ext2");
+    let start_tmk_path = test_dir.path().join("start-tmk.sh");
+    let run_realm_test_path = test_dir.path().join("run_realm_test.sh");
+    std::fs::write(
+        &start_tmk_path,
+        include_bytes!("../test_data/cca_start_tmk.sh"),
+    )
+    .context("failed to stage the CCA Plane0 launch script")?;
+    std::fs::write(
+        &run_realm_test_path,
+        include_bytes!("../test_data/cca_run_realm_test.sh"),
+    )
+    .context("failed to stage the CCA realm launch script")?;
+    for script in [&start_tmk_path, &run_realm_test_path] {
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("failed to make {} executable", script.display()))?;
+    }
     std::fs::copy(artifacts.rootfs_file.get(), &rootfs_path).with_context(|| {
         format!(
             "failed to copy CCA rootfs from {} to {}",
@@ -175,12 +220,18 @@ fn prepare_cca_rootfs(artifacts: &CcaRuntimeArtifacts) -> anyhow::Result<Prepare
     tracing::info!("resize rootfs to 1024M finished");
 
     let cca_files = [
-        (artifacts.simple_tmk_bin.get(), "simple_tmk"),
-        (artifacts.tmk_vmm_bin.get(), "tmk_vmm"),
-        (artifacts.guest_disk.get(), "guest-disk.img"),
-        (artifacts.plane0_linux_image.get(), "Image"),
-        (artifacts.kvmtool_efi.get(), "KVMTOOL_EFI.fd"),
-        (artifacts.lkvm.get(), "lkvm"),
+        (artifacts.openvmm_bin.get(), Path::new("cca/openvmm")),
+        (artifacts.tmk_vmm_bin.get(), Path::new("cca/tmk_vmm")),
+        (artifacts.guest_disk.get(), Path::new("cca/guest-disk.img")),
+        (artifacts.plane0_linux_image.get(), Path::new("cca/Image")),
+        (artifacts.kvmtool_efi.get(), Path::new("cca/KVMTOOL_EFI.fd")),
+        (artifacts.lkvm.get(), Path::new("cca/lkvm")),
+        (artifacts.uefi_igvm.get(), Path::new("cca/uefi-aarch64.bin")),
+        (start_tmk_path.as_path(), Path::new("root/start-tmk.sh")),
+        (
+            run_realm_test_path.as_path(),
+            Path::new("usr/local/bin/run_realm_test.sh"),
+        ),
     ];
     inject_files_into_cca_rootfs(&rootfs_path, &cca_files)?;
 
@@ -240,10 +291,12 @@ fn run_sudo(description: &str, args: &[&OsStr]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn inject_files_into_cca_rootfs(rootfs_file: &Path, files: &[(&Path, &str)]) -> anyhow::Result<()> {
+fn inject_files_into_cca_rootfs(
+    rootfs_file: &Path,
+    files: &[(&Path, &Path)],
+) -> anyhow::Result<()> {
     let mount_dir = tempfile::tempdir().context("failed to create guest rootfs mount directory")?;
     let mnt_dir = mount_dir.path().to_path_buf();
-    let cca_dir = mnt_dir.join("cca");
 
     let mut mounted = false;
     let inject_result = (|| -> anyhow::Result<()> {
@@ -259,13 +312,19 @@ fn inject_files_into_cca_rootfs(rootfs_file: &Path, files: &[(&Path, &str)]) -> 
         )?;
         mounted = true;
 
-        run_sudo(
-            "create cca directory in guest rootfs",
-            &[OsStr::new("mkdir"), OsStr::new("-p"), cca_dir.as_os_str()],
-        )?;
-
-        for (file, file_name) in files {
-            let target_file = cca_dir.join(file_name);
+        for (file, target) in files {
+            let target_file = mnt_dir.join(target);
+            let target_dir = target_file
+                .parent()
+                .context("CCA rootfs target has no parent directory")?;
+            run_sudo(
+                &format!("create {} in guest rootfs", target_dir.display()),
+                &[
+                    OsStr::new("mkdir"),
+                    OsStr::new("-p"),
+                    target_dir.as_os_str(),
+                ],
+            )?;
             run_sudo(
                 &format!(
                     "copy {} into guest rootfs as {}",
@@ -275,6 +334,20 @@ fn inject_files_into_cca_rootfs(rootfs_file: &Path, files: &[(&Path, &str)]) -> 
                 &[OsStr::new("cp"), file.as_os_str(), target_file.as_os_str()],
             )?;
         }
+
+        let initramfs_dir =
+            tempfile::tempdir().context("failed to create VTL0 initramfs build directory")?;
+        let initramfs = initramfs_dir.path().join("vtl0-initramfs.cpio");
+        build_vtl0_initramfs(&initramfs, &mnt_dir)?;
+        let initramfs_target = mnt_dir.join(CCA_VTL0_INITRAMFS_PATH);
+        run_sudo(
+            "copy VTL0 initramfs into guest rootfs",
+            &[
+                OsStr::new("cp"),
+                initramfs.as_os_str(),
+                initramfs_target.as_os_str(),
+            ],
+        )?;
 
         run_sudo("sync guest rootfs writes", &[OsStr::new("sync")])?;
 
@@ -330,6 +403,136 @@ fn inject_files_into_cca_rootfs(rootfs_file: &Path, files: &[(&Path, &str)]) -> 
     inject_result.with_context(|| "failed to mount or inject files into guest rootfs")
 }
 
+fn build_vtl0_initramfs(output: &Path, rootfs: &Path) -> anyhow::Result<()> {
+    let stage = tempfile::tempdir().context("failed to create VTL0 initramfs staging directory")?;
+    let stage = stage.path();
+
+    for directory in ["bin", "dev", "lib", "proc", "root", "sys", "tmp"] {
+        std::fs::create_dir_all(stage.join(directory))
+            .with_context(|| format!("failed to create initramfs /{directory}"))?;
+    }
+    symlink("lib", stage.join("lib64"))
+        .context("failed to create the VTL0 initramfs /lib64 compatibility symlink")?;
+
+    let init_source = stage.join("init.c");
+    let init = stage.join("init");
+    let init_script = stage.join("init.sh");
+    let staged_busybox = stage.join("bin/busybox");
+    std::fs::write(&init_source, CCA_VTL0_INIT_SOURCE)
+        .context("failed to write VTL0 init source")?;
+    std::fs::write(&init_script, CCA_VTL0_INIT_SCRIPT)
+        .context("failed to write VTL0 init script")?;
+    std::fs::set_permissions(&init_script, std::fs::Permissions::from_mode(0o755))
+        .context("failed to make VTL0 init script executable")?;
+    let busybox = rootfs.join("bin/busybox");
+    std::fs::copy(&busybox, &staged_busybox).with_context(|| {
+        format!(
+            "failed to copy BusyBox from {} into the VTL0 initramfs",
+            busybox.display()
+        )
+    })?;
+    std::fs::set_permissions(&staged_busybox, std::fs::Permissions::from_mode(0o755))
+        .context("failed to make VTL0 BusyBox executable")?;
+    for library in [
+        "lib/ld-linux-aarch64.so.1",
+        "lib/libc.so.6",
+        "lib/libresolv.so.2",
+    ] {
+        let source = rootfs.join(library);
+        let target = stage.join(library);
+        std::fs::copy(&source, &target).with_context(|| {
+            format!(
+                "failed to copy BusyBox runtime dependency {} into the VTL0 initramfs",
+                source.display()
+            )
+        })?;
+    }
+    let compile = Command::new("aarch64-linux-gnu-gcc")
+        .args([
+            "-nostdlib",
+            "-static",
+            "-no-pie",
+            "-Os",
+            "-fno-stack-protector",
+            "-fno-asynchronous-unwind-tables",
+            "-Wl,--build-id=none",
+            "-Wl,-e,_start",
+            "-o",
+        ])
+        .arg(&init)
+        .arg(&init_source)
+        .output()
+        .context("failed to launch aarch64-linux-gnu-gcc for VTL0 init")?;
+    if !compile.status.success() {
+        anyhow::bail!(
+            "failed to compile VTL0 init: {}",
+            String::from_utf8_lossy(&compile.stderr).trim()
+        );
+    }
+    std::fs::remove_file(&init_source).context("failed to remove staged VTL0 init source")?;
+
+    for (name, major, minor) in [("console", "5", "1"), ("null", "1", "3")] {
+        let device = stage.join("dev").join(name);
+        run_sudo(
+            &format!("create VTL0 initramfs /dev/{name}"),
+            &[
+                OsStr::new("mknod"),
+                device.as_os_str(),
+                OsStr::new("c"),
+                OsStr::new(major),
+                OsStr::new(minor),
+            ],
+        )?;
+    }
+
+    let archive = File::create(output)
+        .with_context(|| format!("failed to create VTL0 initramfs {}", output.display()))?;
+    let mut cpio = Command::new("bsdcpio")
+        .args(["-o", "--format", "newc", "--owner", "0:0"])
+        .current_dir(stage)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(archive))
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to launch bsdcpio for VTL0 initramfs")?;
+
+    {
+        let stdin = cpio
+            .stdin
+            .as_mut()
+            .context("failed to capture bsdcpio stdin")?;
+        for entry in walkdir::WalkDir::new(stage).sort_by_file_name() {
+            let entry = entry.context("failed to enumerate VTL0 initramfs")?;
+            let relative = entry
+                .path()
+                .strip_prefix(stage)
+                .context("initramfs entry was outside its staging directory")?;
+            if relative.as_os_str().is_empty() {
+                writeln!(stdin, ".")?;
+            } else {
+                writeln!(stdin, "./{}", relative.display())?;
+            }
+        }
+    }
+
+    let result = cpio
+        .wait_with_output()
+        .context("failed to wait for VTL0 initramfs bsdcpio")?;
+    if !result.status.success() {
+        anyhow::bail!(
+            "bsdcpio failed to build VTL0 initramfs: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        );
+    }
+
+    tracing::info!(
+        path = %output.display(),
+        size = output.metadata()?.len(),
+        "built IRQ-sensitive VTL0 Linux initramfs"
+    );
+    Ok(())
+}
+
 fn run_shrinkwrap_cca_test(
     shrinkwrap_exe: &Path,
     venv_dir: &Path,
@@ -338,6 +541,14 @@ fn run_shrinkwrap_cca_test(
     stdout_log: petri::PetriLogFile,
     stderr_log: petri::PetriLogFile,
 ) -> anyhow::Result<()> {
+    let pause_before_start_tmk = pause_before_start_tmk();
+    let interactive_vtl0_shell = interactive_vtl0_shell();
+    if pause_before_start_tmk && interactive_vtl0_shell {
+        anyhow::bail!(
+            "{CCA_PAUSE_BEFORE_START_TMK_ENV} and {CCA_INTERACTIVE_VTL0_SHELL_ENV} cannot both be enabled"
+        );
+    }
+
     let mut emu = start_cca_emulator(
         shrinkwrap_exe,
         venv_dir,
@@ -345,10 +556,21 @@ fn run_shrinkwrap_cca_test(
         venv_bin_path,
         stdout_log,
         stderr_log,
+        !interactive_vtl0_shell,
     )?;
 
     emu.wait_for(CCA_PLANE0_PROMPT)?;
+    if pause_before_start_tmk {
+        emu.interactive_pause_before_start_tmk(rootfs_file)?;
+    }
     emu.send_line(CCA_START_TMK_COMMAND)?;
+    emu.wait_for(CCA_VTL0_TIMER_IRQ_MARKER)?;
+    emu.wait_for(CCA_VTL0_SHELL_READY_MARKER)?;
+    if interactive_vtl0_shell {
+        emu.interactive_vtl0_console(rootfs_file)?;
+        emu.synchronize_vtl0_shell()?;
+    }
+    emu.send_line(CCA_VTL0_SHELL_COMMAND)?;
     emu.wait_for(CCA_TEST_SUCCESS_MARKER)?;
     // Need to manually kill FVP processes for the petri test since shrinkwrap doesn't wait
     // for them to exit and they can interfere with subsequent test runs if left running
@@ -360,6 +582,21 @@ fn run_shrinkwrap_cca_test(
     tracing::info!("CCA test passed; stopped shrinkwrap process with status {status}");
 
     Ok(())
+}
+
+fn pause_before_start_tmk() -> bool {
+    environment_flag_is_set(CCA_PAUSE_BEFORE_START_TMK_ENV)
+}
+
+fn interactive_vtl0_shell() -> bool {
+    environment_flag_is_set(CCA_INTERACTIVE_VTL0_SHELL_ENV)
+}
+
+fn environment_flag_is_set(name: &str) -> bool {
+    matches!(
+        std::env::var(name).as_deref(),
+        Ok("1" | "true" | "yes" | "on")
+    )
 }
 
 fn stop_fvp_processes_for_rootfs(rootfs_file: &Path) -> anyhow::Result<()> {
@@ -419,6 +656,7 @@ fn start_cca_emulator(
     venv_bin_path: &str,
     stdout_log: petri::PetriLogFile,
     stderr_log: petri::PetriLogFile,
+    emit_log_stdout: bool,
 ) -> anyhow::Result<CcaEmulator> {
     let child = Command::new(shrinkwrap_exe)
         .args(["run", "cca-3world.yaml", "--rtvar"])
@@ -449,8 +687,20 @@ fn start_cca_emulator(
         .context("failed to capture shrinkwrap stderr")?;
     let (output_send, output_recv) = mpsc::channel::<String>();
 
-    spawn_output_reader("shrinkwrap stdout", stdout, stdout_log, output_send.clone());
-    spawn_output_reader("shrinkwrap stderr", stderr, stderr_log, output_send.clone());
+    spawn_output_reader(
+        "shrinkwrap stdout",
+        stdout,
+        stdout_log,
+        output_send.clone(),
+        emit_log_stdout,
+    );
+    spawn_output_reader(
+        "shrinkwrap stderr",
+        stderr,
+        stderr_log,
+        output_send.clone(),
+        emit_log_stdout,
+    );
     drop(output_send);
 
     Ok(CcaEmulator {
@@ -586,9 +836,256 @@ impl CcaEmulator {
             .context("failed to flush command to shrinkwrap stdin")
     }
 
+    fn send_bytes(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.stdin
+            .write_all(bytes)
+            .context("failed to write terminal input to shrinkwrap stdin")?;
+        self.stdin
+            .flush()
+            .context("failed to flush terminal input to shrinkwrap stdin")
+    }
+
+    fn synchronize_vtl0_shell(&mut self) -> anyhow::Result<()> {
+        while let Ok(output) = self.output_recv.try_recv() {
+            self.append_output(&output);
+        }
+        self.output.clear();
+        self.send_line("")?;
+        self.wait_for(CCA_VTL0_SHELL_PROMPT)
+    }
+
+    fn interactive_pause_before_start_tmk(&mut self, rootfs_file: &Path) -> anyhow::Result<()> {
+        self.interactive_pause(rootfs_file, "before starting TMK")
+    }
+
+    fn interactive_vtl0_console(&mut self, rootfs_file: &Path) -> anyhow::Result<()> {
+        tracing::warn!(
+            rootfs = %rootfs_file.display(),
+            "CCA test entering the interactive VTL0 Linux console"
+        );
+
+        let mut terminal_output = open_terminal_output();
+        self.send_line("")?;
+        writeln!(
+            terminal_output,
+            "\nVTL0 Linux console. Press Ctrl+] to finish the interactive session."
+        )
+        .context("failed to write VTL0 console prompt")?;
+        terminal_output
+            .flush()
+            .context("failed to flush VTL0 console prompt")?;
+
+        let mut input = File::open("/dev/tty")
+            .context("the interactive VTL0 console requires a controlling terminal")?;
+        let _raw_mode = RawModeGuard::enter(&input)?;
+        let (input_send, input_recv) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buffer = [0; 256];
+            loop {
+                let event = match input.read(&mut buffer) {
+                    Ok(0) => TerminalInputEvent::Eof,
+                    Ok(len) => TerminalInputEvent::Bytes(buffer[..len].to_vec()),
+                    Err(err) => TerminalInputEvent::Error(err.to_string()),
+                };
+                let done = matches!(
+                    event,
+                    TerminalInputEvent::Eof | TerminalInputEvent::Error(_)
+                );
+                if input_send.send(event).is_err() || done {
+                    return;
+                }
+            }
+        });
+
+        loop {
+            match input_recv.try_recv() {
+                Ok(TerminalInputEvent::Bytes(bytes)) => {
+                    if let Some(escape) = bytes
+                        .iter()
+                        .position(|&byte| byte == CCA_INTERACTIVE_ESCAPE)
+                    {
+                        self.send_bytes(&bytes[..escape])?;
+                        terminal_output.write_all(b"\r\n")?;
+                        terminal_output.flush()?;
+                        self.started = Instant::now();
+                        return Ok(());
+                    }
+                    self.send_bytes(&bytes)?;
+                }
+                Ok(TerminalInputEvent::Eof) => {
+                    anyhow::bail!("terminal input closed during the interactive VTL0 console");
+                }
+                Ok(TerminalInputEvent::Error(err)) => {
+                    anyhow::bail!("failed to read interactive terminal input: {err}");
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    anyhow::bail!("terminal input ended during the interactive VTL0 console");
+                }
+            }
+
+            if let Some(status) = self.child.as_mut().try_wait()? {
+                anyhow::bail!("shrinkwrap exited during the interactive VTL0 console: {status}");
+            }
+
+            match self.output_recv.recv_timeout(Duration::from_millis(20)) {
+                Ok(output) => {
+                    self.append_output(&output);
+                    terminal_output
+                        .write_all(output.as_bytes())
+                        .context("failed to write VTL0 console output to the terminal")?;
+                    terminal_output
+                        .flush()
+                        .context("failed to flush VTL0 console output")?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let status = if let Some(status) = self.child.as_mut().try_wait()? {
+                        status
+                    } else {
+                        self.child.kill_and_wait().with_context(
+                            || "failed to stop shrinkwrap after VTL0 console output ended",
+                        )?
+                    };
+                    anyhow::bail!("VTL0 console output ended before the session exited: {status}");
+                }
+            }
+        }
+    }
+
+    fn interactive_pause(&mut self, rootfs_file: &Path, location: &str) -> anyhow::Result<()> {
+        tracing::warn!(
+            rootfs = %rootfs_file.display(),
+            continue_command = CCA_PAUSE_CONTINUE_COMMAND,
+            location,
+            "CCA test paused for interactive input"
+        );
+
+        let mut terminal_output = open_terminal_output();
+        writeln!(
+            terminal_output,
+            "\nCCA test paused {location}.\n\
+             Rootfs: {}\n\
+             Type guest commands here. Enter `{}` on its own line to continue the test.",
+            rootfs_file.display(),
+            CCA_PAUSE_CONTINUE_COMMAND
+        )
+        .context("failed to write CCA pause prompt")?;
+        terminal_output
+            .flush()
+            .context("failed to flush CCA pause prompt")?;
+
+        let input = open_terminal_input().context("failed to open terminal input for CCA pause")?;
+        let (input_send, input_recv) = mpsc::channel();
+        thread::spawn(move || {
+            for line in input.lines() {
+                if input_send.send(line).is_err() {
+                    return;
+                }
+            }
+        });
+
+        loop {
+            match input_recv.try_recv() {
+                Ok(line) => {
+                    let line = line.context("failed to read CCA pause command")?;
+                    if line.trim() == CCA_PAUSE_CONTINUE_COMMAND {
+                        self.started = Instant::now();
+                        tracing::info!("resuming CCA test after interactive pause");
+                        return Ok(());
+                    }
+
+                    self.send_line(&line)?;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    anyhow::bail!("terminal input closed during CCA interactive pause");
+                }
+            }
+
+            if let Some(status) = self.child.as_mut().try_wait()? {
+                anyhow::bail!("shrinkwrap exited while CCA test was paused: {status}");
+            }
+
+            match self.output_recv.recv_timeout(Duration::from_millis(100)) {
+                Ok(output) => {
+                    self.append_output(&output);
+                    terminal_output
+                        .write_all(output.as_bytes())
+                        .context("failed to write CCA emulator output to terminal")?;
+                    terminal_output
+                        .flush()
+                        .context("failed to flush CCA emulator output to terminal")?;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let status = if let Some(status) = self.child.as_mut().try_wait()? {
+                        status
+                    } else {
+                        self.child.kill_and_wait().with_context(
+                            || "failed to stop shrinkwrap after output ended during CCA pause",
+                        )?
+                    };
+                    anyhow::bail!("shrinkwrap output ended while CCA test was paused: {status}");
+                }
+            }
+        }
+    }
+
     fn stop(mut self) -> anyhow::Result<std::process::ExitStatus> {
         self.child.kill_and_wait()
     }
+}
+
+fn open_terminal_input() -> std::io::Result<Box<dyn BufRead + Send>> {
+    File::open("/dev/tty")
+        .map(|tty| Box::new(BufReader::new(tty)) as Box<dyn BufRead + Send>)
+        .or_else(|_| Ok(Box::new(BufReader::new(std::io::stdin())) as Box<dyn BufRead + Send>))
+}
+
+fn open_terminal_output() -> Box<dyn Write> {
+    OpenOptions::new()
+        .write(true)
+        .open("/dev/tty")
+        .map(|tty| Box::new(tty) as Box<dyn Write>)
+        .unwrap_or_else(|_| Box::new(std::io::stderr()) as Box<dyn Write>)
+}
+
+struct RawModeGuard {
+    terminal: File,
+    original: termios::Termios,
+}
+
+impl RawModeGuard {
+    fn enter(terminal: &File) -> anyhow::Result<Self> {
+        let terminal = terminal
+            .try_clone()
+            .context("failed to clone terminal handle")?;
+        let original =
+            termios::tcgetattr(&terminal).context("failed to read terminal attributes")?;
+        let mut raw = original.clone();
+        termios::cfmakeraw(&mut raw);
+        raw.output_flags = original.output_flags;
+        termios::tcsetattr(&terminal, termios::SetArg::TCSANOW, &raw)
+            .context("failed to enable terminal raw mode")?;
+        Ok(Self { terminal, original })
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if let Err(err) =
+            termios::tcsetattr(&self.terminal, termios::SetArg::TCSANOW, &self.original)
+        {
+            tracing::warn!(error = %err, "failed to restore terminal mode");
+        }
+    }
+}
+
+enum TerminalInputEvent {
+    Bytes(Vec<u8>),
+    Eof,
+    Error(String),
 }
 
 enum OutputEvent {
@@ -602,6 +1099,7 @@ fn spawn_output_reader(
     mut stream: impl Read + Send + 'static,
     log_file: petri::PetriLogFile,
     output_send: mpsc::Sender<String>,
+    emit_log_stdout: bool,
 ) {
     let (byte_send, byte_recv) = mpsc::channel();
 
@@ -633,27 +1131,44 @@ fn spawn_output_reader(
                         line.pop();
                     }
                     let line_was_empty = line.is_empty();
-                    write_output_line(&log_file, &output_send, &mut line, &mut logged_len);
-                    write_output_newline(&log_file, &output_send, line_was_empty);
+                    write_output_line(
+                        &log_file,
+                        &output_send,
+                        &mut line,
+                        &mut logged_len,
+                        emit_log_stdout,
+                    );
+                    write_output_newline(&log_file, &output_send, line_was_empty, emit_log_stdout);
                 }
                 Ok(OutputEvent::Byte(byte)) => {
                     line.push(byte);
-                    write_visible_output(&line, &mut logged_len, &output_send);
                 }
                 Ok(OutputEvent::Eof) => {
-                    write_output_line(&log_file, &output_send, &mut line, &mut logged_len);
+                    write_output_line(
+                        &log_file,
+                        &output_send,
+                        &mut line,
+                        &mut logged_len,
+                        emit_log_stdout,
+                    );
                     break;
                 }
                 Ok(OutputEvent::Error(line)) => {
-                    log_file.write_entry(&line);
+                    write_log_entry(&log_file, &line, emit_log_stdout);
                     let _ = output_send.send(line);
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    write_visible_output(&line, &mut logged_len, &output_send);
+                    write_partial_output(&line, &mut logged_len, &output_send);
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    write_output_line(&log_file, &output_send, &mut line, &mut logged_len);
+                    write_output_line(
+                        &log_file,
+                        &output_send,
+                        &mut line,
+                        &mut logged_len,
+                        emit_log_stdout,
+                    );
                     break;
                 }
             }
@@ -666,6 +1181,7 @@ fn write_output_line(
     output_send: &mpsc::Sender<String>,
     line: &mut Vec<u8>,
     logged_len: &mut usize,
+    emit_log_stdout: bool,
 ) {
     if line.is_empty() {
         return;
@@ -674,7 +1190,7 @@ fn write_output_line(
     write_visible_output(line, logged_len, output_send);
 
     let line_string = String::from_utf8_lossy(line).into_owned();
-    log_file.write_entry(&line_string);
+    write_log_entry(log_file, &line_string, emit_log_stdout);
     line.clear();
     *logged_len = 0;
 }
@@ -683,13 +1199,20 @@ fn write_output_newline(
     log_file: &petri::PetriLogFile,
     output_send: &mpsc::Sender<String>,
     line_was_empty: bool,
+    emit_log_stdout: bool,
 ) {
-    let _ = std::io::stdout().write_all(b"\n");
-    let _ = std::io::stdout().flush();
     let _ = output_send.send("\n".to_owned());
 
     if line_was_empty {
-        log_file.write_entry("");
+        write_log_entry(log_file, "", emit_log_stdout);
+    }
+}
+
+fn write_log_entry(log_file: &petri::PetriLogFile, line: &str, emit_stdout: bool) {
+    if emit_stdout {
+        log_file.write_entry(line);
+    } else {
+        log_file.write_entry_silent(line);
     }
 }
 
@@ -699,10 +1222,13 @@ fn write_visible_output(line: &[u8], logged_len: &mut usize, output_send: &mpsc:
     }
 
     let output = &line[*logged_len..];
-    let _ = std::io::stdout().write_all(output);
-    let _ = std::io::stdout().flush();
     let _ = output_send.send(String::from_utf8_lossy(output).into_owned());
     *logged_len = line.len();
+}
+
+fn write_partial_output(line: &[u8], logged_len: &mut usize, output_send: &mpsc::Sender<String>) {
+    let visible = line.strip_suffix(b"\r").unwrap_or(line);
+    write_visible_output(visible, logged_len, output_send);
 }
 
 petri::multitest!(vec![

@@ -58,6 +58,7 @@ anyhow.workspace = true
 fs-err.workspace = true
 futures.workspace = true
 jiff.workspace = true
+nix = { workspace = true, features = ["term"] }
 tracing.workspace = true
 zerocopy.workspace = true
 static_assertions.workspace = true
@@ -67,6 +68,7 @@ openvmm_ttrpc_vmservice.workspace = true
 mesh_rpc.workspace = true
 
 tempfile.workspace = true
+walkdir.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 pipette_client.workspace = true
 serde = { workspace = true, features = ["std"] }

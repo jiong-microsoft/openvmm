@@ -8193,9 +8193,11 @@ dependencies = [
 name = "tmk_vmm"
 version = "0.0.0"
 dependencies = [
+ "aarch64defs",
  "anyhow",
  "build_rs_guest_arch",
  "clap",
+ "fdt",
  "fs-err",
  "futures",
  "guestmem",
@@ -8218,6 +8220,7 @@ dependencies = [
  "virt_kvm",
  "virt_mshv",
  "virt_mshv_vtl",
+ "virt_support_gic",
  "virt_whp",
  "vm_loader",
  "vm_topology",
@@ -10477,6 +10480,7 @@ dependencies = [
  "mesh",
  "mesh_rpc",
  "net_backend_resources",
+ "nix 0.30.1",
  "nvme_resources",
  "nvme_spec",
  "nvme_test",
@@ -10505,6 +10509,7 @@ dependencies = [
  "vmgs_resources",
  "vmm_test_igvm_agent",
  "vmm_test_macros",
+ "walkdir",
  "zerocopy",
 ]
 

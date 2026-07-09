@@ -292,9 +292,10 @@ impl BackingShared {
                 backing_shared_params,
             )?),
             #[cfg(guest_arch = "aarch64")]
-            IsolationType::Cca => {
-                BackingShared::Cca(Box::new(CcaBackedShared::new(backing_shared_params)?))
-            }
+            IsolationType::Cca => BackingShared::Cca(Box::new(CcaBackedShared::new(
+                backing_shared_params,
+                partition_params.topology.virt_timer_ppi(),
+            )?)),
             _ => unreachable!(),
         })
     }
@@ -630,6 +631,17 @@ impl GetReferenceTime for TscReferenceTimeSource {
 
 impl virt::irqcon::ControlGic for UhPartitionInner {
     fn set_spi_irq(&self, irq_id: u32, high: bool) {
+        #[cfg(guest_arch = "aarch64")]
+        if let BackingShared::Cca(shared) = &self.backing_shared {
+            if shared.set_spi_irq(irq_id, high)
+                && high
+                && let Some(vp) = self.vp(VpIndex::BSP)
+            {
+                vp.wake(GuestVtl::Vtl0, WakeReason::INTCON);
+            }
+            return;
+        }
+
         if let Err(err) = self.hcl.request_interrupt(
             hvdef::HvInterruptControl::new()
                 .with_arm64_asserted(high)
@@ -815,7 +827,6 @@ impl WakeReason {
     const MESSAGE_QUEUES: Self = Self::new().with_message_queues(true);
     #[cfg(guest_arch = "x86_64")]
     const HV_START_ENABLE_VP_VTL: Self = Self::new().with_hv_start_enable_vtl_vp(true); // StartVp/EnableVpVtl handling
-    #[cfg(guest_arch = "x86_64")]
     const INTCON: Self = Self::new().with_intcon(true);
     #[cfg(guest_arch = "x86_64")]
     const UPDATE_PROXY_IRR_FILTER: Self = Self::new().with_update_proxy_irr_filter(true);

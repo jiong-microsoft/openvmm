@@ -24,6 +24,18 @@ pub struct CcaTestsCli {
     #[clap(long)]
     pub build_only: bool,
 
+    /// Use a local AArch64 mu_msvm MSVM.fd when building the UEFI IGVM.
+    #[clap(long, value_name = "PATH")]
+    pub custom_uefi: Option<PathBuf>,
+
+    /// Pause at the CCA plane0 shell before running /root/start-tmk.sh.
+    #[clap(long)]
+    pub pause_before_start_tmk: bool,
+
+    /// Pause at the interactive VTL0 Linux shell and forward terminal commands.
+    #[clap(long, conflicts_with = "pause_before_start_tmk")]
+    pub interactive_vtl0_shell: bool,
+
     /// Verbose pipeline output
     #[clap(long)]
     pub verbose: bool,
@@ -63,6 +75,9 @@ impl IntoPipeline for CcaTestsCli {
             install_emu,
             update_emu,
             build_only,
+            custom_uefi,
+            pause_before_start_tmk,
+            interactive_vtl0_shell,
             verbose,
             update_emu_subcmds:
                 CcaTestsUpdateEmuSubCmds {
@@ -163,13 +178,24 @@ impl IntoPipeline for CcaTestsCli {
             None
         };
 
-        let test_job = pipeline
+        let mut test_job = pipeline
             .new_job(
                 FlowPlatform::host(backend_hint),
                 FlowArch::host(backend_hint),
                 "cca-tests: run cca tests",
             )
-            .dep_on(|_| flowey_lib_hvlite::_jobs::cfg_versions::Request::Init)
+            .dep_on(|_| flowey_lib_hvlite::_jobs::cfg_versions::Request::Init);
+
+        if let Some(uefi_path) = custom_uefi {
+            test_job = test_job.dep_on(move |_| {
+                flowey_lib_hvlite::_jobs::cfg_versions::Request::LocalUefi(
+                    flowey_lib_hvlite::common::CommonArch::Aarch64,
+                    ReadVar::from_static(uefi_path),
+                )
+            });
+        }
+
+        let test_job = test_job
             .dep_on(
                 |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                     hvlite_repo_source: openvmm_repo.clone(),
@@ -189,6 +215,8 @@ impl IntoPipeline for CcaTestsCli {
             .dep_on(|ctx| flowey_lib_hvlite::_jobs::local_run_cca_test::Params {
                 test_root: test_root.clone(),
                 build_only,
+                pause_before_start_tmk,
+                interactive_vtl0_shell,
                 done: ctx.new_done_handle(),
             })
             .finish();

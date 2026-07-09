@@ -226,6 +226,7 @@ struct LogWriter<'a> {
     inner: &'a LogFileInner,
     level: Level,
     timestamp: Option<Timestamp>,
+    emit_stdout: bool,
 }
 
 impl std::io::Write for LogWriter<'_> {
@@ -236,8 +237,10 @@ impl std::io::Write for LogWriter<'_> {
             .write_entry(self.timestamp, self.level, &self.inner.source, buf);
         // Write to the specific log file.
         let _ = (&self.inner.file).write_all(buf);
-        // Write to stdout, prefixed with the source.
-        self.inner.write_stdout(buf);
+        if self.emit_stdout {
+            // Write to stdout, prefixed with the source.
+            self.inner.write_stdout(buf);
+        }
         Ok(buf.len())
     }
 
@@ -268,6 +271,7 @@ impl PetriLogFile {
             inner: &self.0,
             level,
             timestamp,
+            emit_stdout: true,
         }
         .write_all(format!("{}\n", args).as_bytes());
     }
@@ -275,6 +279,17 @@ impl PetriLogFile {
     /// Write a log entry with the given message.
     pub fn write_entry(&self, message: impl std::fmt::Display) {
         self.write_entry_fmt(None, Level::INFO, format_args!("{}", message));
+    }
+
+    /// Write a log entry to the attachment files without mirroring it to stdout.
+    pub fn write_entry_silent(&self, message: impl std::fmt::Display) {
+        let _ = LogWriter {
+            inner: &self.0,
+            level: Level::INFO,
+            timestamp: None,
+            emit_stdout: false,
+        }
+        .write_all(format!("{}\n", message).as_bytes());
     }
 }
 
@@ -341,6 +356,7 @@ impl<'a> MakeWriter<'a> for PetriWriter {
             inner: &self.0.0,
             level: Level::INFO,
             timestamp: None,
+            emit_stdout: true,
         }
     }
 
@@ -349,6 +365,7 @@ impl<'a> MakeWriter<'a> for PetriWriter {
             inner: &self.0.0,
             level: *meta.level(),
             timestamp: None,
+            emit_stdout: true,
         }
     }
 }

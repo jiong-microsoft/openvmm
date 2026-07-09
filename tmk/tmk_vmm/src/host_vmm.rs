@@ -90,6 +90,8 @@ impl RunContext<'_> {
                 &guest_memory,
                 partition.caps(),
                 test,
+                #[cfg(guest_arch = "aarch64")]
+                None,
                 async |_this, runner| {
                     let [vp] = vps.try_into().ok().unwrap();
                     threads.push(start_vp(partition.clone(), vp, runner).await?);

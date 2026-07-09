@@ -10,6 +10,8 @@ use crate::run::RunnerBuilder;
 use crate::run::TestResult;
 use guestmem::GuestMemory;
 use std::sync::Arc;
+#[cfg(guest_arch = "aarch64")]
+use virt::Aarch64Partition as _;
 use virt::Partition;
 use virt_mshv_vtl::UhLateParams;
 use virt_mshv_vtl::UhPartitionNewParams;
@@ -29,7 +31,9 @@ impl RunContext<'_> {
             cvm_cpuid_info: None,
             snp_secrets: None,
             vtom: None,
-            handle_synic: true,
+            // The CCA backing does not implement the synthetic interrupt
+            // controller yet, so it must not register SynIC intercepts.
+            handle_synic: isolation != virt::IsolationType::Cca,
             no_sidecar_hotplug: false,
             use_mmio_hypercalls: false,
             intercept_debug_exceptions: false,
@@ -83,14 +87,23 @@ impl RunContext<'_> {
             .await?;
 
         let partition = Arc::new(partition);
+        #[cfg(guest_arch = "aarch64")]
+        let control_gic = Some(partition.control_gic(hvdef::Vtl::Vtl0));
 
         let mut threads = Vec::new();
         let r = self
-            .run(m.vtl0(), partition.caps(), test, async |_this, runner| {
-                let [vp] = vps.try_into().ok().unwrap();
-                threads.push(start_vp(vp, runner, isolation).await?);
-                Ok(())
-            })
+            .run(
+                m.vtl0(),
+                partition.caps(),
+                test,
+                #[cfg(guest_arch = "aarch64")]
+                control_gic,
+                async |_this, runner| {
+                    let [vp] = vps.try_into().ok().unwrap();
+                    threads.push(start_vp(vp, runner, isolation).await?);
+                    Ok(())
+                },
+            )
             .await?;
 
         for thread in threads {

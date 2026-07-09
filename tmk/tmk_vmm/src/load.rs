@@ -11,6 +11,10 @@ use loader::importer::GuestArch;
 use loader::importer::ImageLoad;
 #[cfg(guest_arch = "x86_64")]
 use loader::importer::X86Register;
+#[cfg(guest_arch = "aarch64")]
+use loader::linux::InitrdAddressType;
+#[cfg(guest_arch = "aarch64")]
+use loader::linux::InitrdConfig;
 use object::Endianness;
 use object::Object;
 use object::ObjectSection;
@@ -124,6 +128,202 @@ pub fn load_aarch64(
     );
 
     Ok(regs)
+}
+
+/// Direct-boots an AArch64 Linux Image with a minimal CCA test platform DT.
+#[cfg(guest_arch = "aarch64")]
+pub fn load_linux_aarch64(
+    memory_layout: &MemoryLayout,
+    guest_memory: &GuestMemory,
+    processor_topology: &ProcessorTopology<Aarch64Topology>,
+    caps: &virt::aarch64::Aarch64PartitionCapabilities,
+    kernel: &mut File,
+    initrd: &mut File,
+    cmdline: &str,
+) -> anyhow::Result<Arc<virt::aarch64::Aarch64InitialRegs>> {
+    const INITRD_OFFSET: u64 = 16 << 20;
+
+    let memory_start = memory_layout
+        .ram()
+        .first()
+        .context("direct Linux boot requires RAM")?
+        .range
+        .start();
+    let initrd_size = initrd
+        .metadata()
+        .context("failed to inspect Linux initramfs")?
+        .len();
+    let initrd_start = memory_start
+        .checked_add(INITRD_OFFSET)
+        .context("Linux initramfs address overflowed")?;
+    let initrd_end = initrd_start
+        .checked_add(initrd_size)
+        .context("Linux initramfs range overflowed")?;
+    let kernel_minimum_start_address = initrd_end
+        .checked_add(0x1f_ffff)
+        .context("Linux kernel address overflowed")?
+        & !0x1f_ffff;
+
+    let device_tree = build_linux_dt(
+        memory_layout,
+        processor_topology,
+        cmdline,
+        initrd_start,
+        initrd_end,
+    )
+    .context("failed to build Linux device tree")?;
+
+    let mut loader = vm_loader::Loader::new(guest_memory.clone(), memory_layout, Vtl::Vtl0);
+    let load_info = loader::linux::load_kernel_and_initrd_arm64(
+        &mut loader,
+        kernel,
+        kernel_minimum_start_address,
+        Some(InitrdConfig {
+            initrd_address: InitrdAddressType::Address(initrd_start),
+            initrd,
+            size: initrd_size,
+        }),
+        Some(&device_tree),
+    )
+    .context("failed to load AArch64 Linux Image")?;
+    loader::linux::set_direct_boot_registers_arm64(&mut loader, &load_info)
+        .context("failed to set AArch64 Linux boot registers")?;
+
+    Ok(vm_loader::initial_regs::aarch64_initial_regs(
+        &loader.initial_regs(),
+        caps,
+        &processor_topology.vp_arch(VpIndex::BSP),
+    ))
+}
+
+#[cfg(guest_arch = "aarch64")]
+fn build_linux_dt(
+    memory_layout: &MemoryLayout,
+    processor_topology: &ProcessorTopology<Aarch64Topology>,
+    cmdline: &str,
+    initrd_start: u64,
+    initrd_end: u64,
+) -> Result<Vec<u8>, fdt::builder::Error> {
+    use vm_topology::processor::aarch64::GicVersion;
+
+    const UART_BASE: u64 = 0xeffe_c000;
+    const UART_SPI: u32 = 1;
+    const PHANDLE_GIC: u32 = 1;
+    const GIC_SPI: u32 = 0;
+    const GIC_PPI: u32 = 1;
+    const IRQ_TYPE_LEVEL_HIGH: u32 = 4;
+    const IRQ_TYPE_LEVEL_LOW: u32 = 8;
+
+    let GicVersion::V3 {
+        redistributors_base,
+    } = processor_topology.gic_version()
+    else {
+        unreachable!("CCA Linux prototype requires GICv3")
+    };
+
+    let mut buffer = vec![0u8; 0x1_0000];
+    let mut builder = fdt::builder::Builder::new(fdt::builder::BuilderConfig {
+        blob_buffer: &mut buffer,
+        string_table_cap: 512,
+        memory_reservations: &[],
+    })?;
+
+    let p_address_cells = builder.add_string("#address-cells")?;
+    let p_size_cells = builder.add_string("#size-cells")?;
+    let p_compatible = builder.add_string("compatible")?;
+    let p_device_type = builder.add_string("device_type")?;
+    let p_reg = builder.add_string("reg")?;
+    let p_status = builder.add_string("status")?;
+    let p_interrupt_cells = builder.add_string("#interrupt-cells")?;
+    let p_interrupt_controller = builder.add_string("interrupt-controller")?;
+    let p_interrupt_parent = builder.add_string("interrupt-parent")?;
+    let p_interrupts = builder.add_string("interrupts")?;
+    let p_interrupt_names = builder.add_string("interrupt-names")?;
+    let p_always_on = builder.add_string("always-on")?;
+    let p_phandle = builder.add_string("phandle")?;
+    let p_bootargs = builder.add_string("bootargs")?;
+    let p_stdout_path = builder.add_string("stdout-path")?;
+    let p_initrd_start = builder.add_string("linux,initrd-start")?;
+    let p_initrd_end = builder.add_string("linux,initrd-end")?;
+    let p_current_speed = builder.add_string("current-speed")?;
+
+    let mut root = builder
+        .start_node("")?
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_u32(p_interrupt_parent, PHANDLE_GIC)?
+        .add_str(p_compatible, "microsoft,openvmm-cca-prototype")?;
+
+    let cpu = root
+        .start_node("cpus")?
+        .add_u32(p_address_cells, 1)?
+        .add_u32(p_size_cells, 0)?
+        .start_node("cpu@0")?
+        .add_str(p_device_type, "cpu")?
+        .add_str(p_compatible, "arm,armv8")?
+        .add_u32(p_reg, 0)?
+        .add_str(p_status, "okay")?
+        .end_node()?
+        .end_node()?;
+    root = cpu;
+
+    for entry in memory_layout.ram() {
+        root = root
+            .start_node(format!("memory@{:x}", entry.range.start()).as_str())?
+            .add_str(p_device_type, "memory")?
+            .add_u64_array(p_reg, &[entry.range.start(), entry.range.len()])?
+            .end_node()?;
+    }
+
+    root = root
+        .start_node(format!("intc@{:x}", processor_topology.gic_distributor_base()).as_str())?
+        .add_str(p_compatible, "arm,gic-v3")?
+        .add_u64_array(
+            p_reg,
+            &[
+                processor_topology.gic_distributor_base(),
+                aarch64defs::GIC_DISTRIBUTOR_SIZE,
+                redistributors_base,
+                aarch64defs::GIC_REDISTRIBUTOR_SIZE * u64::from(processor_topology.vp_count()),
+            ],
+        )?
+        .add_u32(p_address_cells, 2)?
+        .add_u32(p_size_cells, 2)?
+        .add_u32(p_interrupt_cells, 3)?
+        .add_null(p_interrupt_controller)?
+        .add_u32(p_phandle, PHANDLE_GIC)?
+        .end_node()?;
+
+    let timer_ppi = processor_topology.virt_timer_ppi();
+    assert!((16..32).contains(&timer_ppi));
+    root = root
+        .start_node("timer")?
+        .add_str(p_compatible, "arm,armv8-timer")?
+        .add_str(p_interrupt_names, "virt")?
+        .add_u32_array(p_interrupts, &[GIC_PPI, timer_ppi - 16, IRQ_TYPE_LEVEL_LOW])?
+        .add_null(p_always_on)?
+        .end_node()?;
+
+    root = root
+        .start_node(format!("uart@{UART_BASE:x}").as_str())?
+        .add_str(p_compatible, "arm,sbsa-uart")?
+        .add_u64_array(p_reg, &[UART_BASE, 0x1000])?
+        .add_u32_array(p_interrupts, &[GIC_SPI, UART_SPI, IRQ_TYPE_LEVEL_HIGH])?
+        .add_u32(p_current_speed, 115200)?
+        .add_str(p_status, "okay")?
+        .end_node()?;
+
+    root = root
+        .start_node("chosen")?
+        .add_str(p_bootargs, cmdline)?
+        .add_str(p_stdout_path, "/uart@effec000")?
+        .add_u64(p_initrd_start, initrd_start)?
+        .add_u64(p_initrd_end, initrd_end)?
+        .end_node()?;
+
+    let size = root.end_node()?.build(0)?;
+    buffer.truncate(size);
+    Ok(buffer)
 }
 
 fn load_common<R: Debug + GuestArch>(
