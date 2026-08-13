@@ -11,14 +11,22 @@ use core::sync::atomic::Ordering::Relaxed;
 
 const GIC_DISTRIBUTOR_BASE: usize = tmk_protocol::aarch64::GIC_DISTRIBUTOR_BASE as usize;
 const GIC_REDISTRIBUTOR_BASE: usize = tmk_protocol::aarch64::GIC_REDISTRIBUTOR_BASE as usize;
-const GIC_REDISTRIBUTOR_SGI_BASE: usize = GIC_REDISTRIBUTOR_BASE + 0x1_0000;
 
-const GICD_CTLR: usize = GIC_DISTRIBUTOR_BASE;
-const GICR_WAKER: usize = GIC_REDISTRIBUTOR_BASE + 0x14;
-const GICR_IGROUPR0: usize = GIC_REDISTRIBUTOR_SGI_BASE + 0x80;
-const GICR_ISENABLER0: usize = GIC_REDISTRIBUTOR_SGI_BASE + 0x100;
-const GICR_ICENABLER0: usize = GIC_REDISTRIBUTOR_SGI_BASE + 0x180;
-const GICR_IPRIORITYR0: usize = GIC_REDISTRIBUTOR_SGI_BASE + 0x400;
+const GICR_SGI_FRAME_OFFSET: usize = 0x1_0000;
+const GICD_CTLR_OFFSET: usize = 0x0;
+const GICR_WAKER_OFFSET: usize = 0x14;
+const GICR_IGROUPR0_OFFSET: usize = 0x80;
+const GICR_ISENABLER0_OFFSET: usize = 0x100;
+const GICR_ICENABLER0_OFFSET: usize = 0x180;
+const GICR_IPRIORITYR0_OFFSET: usize = 0x400;
+
+const GIC_REDISTRIBUTOR_SGI_BASE: usize = GIC_REDISTRIBUTOR_BASE + GICR_SGI_FRAME_OFFSET;
+const GICD_CTLR_ADDRESS: usize = GIC_DISTRIBUTOR_BASE + GICD_CTLR_OFFSET;
+const GICR_WAKER_ADDRESS: usize = GIC_REDISTRIBUTOR_BASE + GICR_WAKER_OFFSET;
+const GICR_IGROUPR0_ADDRESS: usize = GIC_REDISTRIBUTOR_SGI_BASE + GICR_IGROUPR0_OFFSET;
+const GICR_ISENABLER0_ADDRESS: usize = GIC_REDISTRIBUTOR_SGI_BASE + GICR_ISENABLER0_OFFSET;
+const GICR_ICENABLER0_ADDRESS: usize = GIC_REDISTRIBUTOR_SGI_BASE + GICR_ICENABLER0_OFFSET;
+const GICR_IPRIORITYR0_ADDRESS: usize = GIC_REDISTRIBUTOR_SGI_BASE + GICR_IPRIORITYR0_OFFSET;
 
 const GIC_SPECIAL_INTID: u32 = 1020;
 const DAIF_IRQ_MASK: u64 = 1 << 7;
@@ -213,20 +221,23 @@ impl<'scope> Scope<'scope, '_> {
     pub fn enable_gic_irq(&self, intid: u32) {
         assert!(intid < 32, "only SGI/PPI interrupts are supported");
         enable_gic_for_current_vp();
-        write_reg32(GICR_IGROUPR0, read_reg32(GICR_IGROUPR0) | (1 << intid));
+        write_reg32(
+            GICR_IGROUPR0_ADDRESS,
+            read_reg32(GICR_IGROUPR0_ADDRESS) | (1 << intid),
+        );
 
-        let priority_address = GICR_IPRIORITYR0 + (intid as usize & !3);
+        let priority_address = GICR_IPRIORITYR0_ADDRESS + (intid as usize & !3);
         let priority_shift = (intid & 3) * 8;
         let priority = read_reg32(priority_address) & !(0xff << priority_shift);
         write_reg32(priority_address, priority | (0x80 << priority_shift));
-        write_reg32(GICR_ISENABLER0, 1 << intid);
+        write_reg32(GICR_ISENABLER0_ADDRESS, 1 << intid);
         memory_barrier();
     }
 
     /// Disables a GIC SGI/PPI interrupt for the current VP.
     pub fn disable_gic_irq(&self, intid: u32) {
         assert!(intid < 32, "only SGI/PPI interrupts are supported");
-        write_reg32(GICR_ICENABLER0, 1 << intid);
+        write_reg32(GICR_ICENABLER0_ADDRESS, 1 << intid);
         memory_barrier();
     }
 
@@ -296,7 +307,7 @@ pub fn disable_virtual_timer() {
 /// This gives VMMs that emulate the GIC a regular exit on which to observe
 /// changes to interrupt sources that are managed outside the guest.
 pub fn poll_interrupts() {
-    let _ = read_reg32(GICD_CTLR);
+    let _ = read_reg32(GICD_CTLR_ADDRESS);
 }
 
 #[cfg_attr(not(minimal_rt), expect(dead_code))]
@@ -359,11 +370,11 @@ fn arch_init_once() {
 }
 
 fn enable_gic_for_current_vp() {
-    write_reg32(GICD_CTLR, GICD_CTLR_ENABLE_GRP1_AND_ARE);
+    write_reg32(GICD_CTLR_ADDRESS, GICD_CTLR_ENABLE_GRP1_AND_ARE);
 
-    let waker = read_reg32(GICR_WAKER) & !(1 << 1);
-    write_reg32(GICR_WAKER, waker);
-    while read_reg32(GICR_WAKER) & (1 << 2) != 0 {
+    let waker = read_reg32(GICR_WAKER_ADDRESS) & !(1 << 1);
+    write_reg32(GICR_WAKER_ADDRESS, waker);
+    while read_reg32(GICR_WAKER_ADDRESS) & (1 << 2) != 0 {
         core::hint::spin_loop();
     }
 
