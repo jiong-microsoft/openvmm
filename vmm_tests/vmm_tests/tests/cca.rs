@@ -25,7 +25,9 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-const CCA_TEST_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const CCA_PLANE0_BOOT_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const CCA_VTL0_BOOT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const CCA_POST_BOOT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const CCA_VTL0_TIMER_IRQ_MARKER: &str = "CCA_VTL0_TIMER_IRQ_OK";
 const CCA_VTL0_SHELL_READY_MARKER: &str = "CCA_VTL0_SHELL_READY";
 const CCA_VTL0_SHELL_PROMPT: &str = "/ #";
@@ -559,19 +561,19 @@ fn run_shrinkwrap_cca_test(
         !interactive_vtl0_shell,
     )?;
 
-    emu.wait_for(CCA_PLANE0_PROMPT)?;
+    emu.wait_for(CCA_PLANE0_PROMPT, CCA_PLANE0_BOOT_TIMEOUT)?;
     if pause_before_start_tmk {
         emu.interactive_pause_before_start_tmk(rootfs_file)?;
     }
     emu.send_line(CCA_START_TMK_COMMAND)?;
-    emu.wait_for(CCA_VTL0_TIMER_IRQ_MARKER)?;
-    emu.wait_for(CCA_VTL0_SHELL_READY_MARKER)?;
+    emu.wait_for(CCA_VTL0_TIMER_IRQ_MARKER, CCA_VTL0_BOOT_TIMEOUT)?;
+    emu.wait_for(CCA_VTL0_SHELL_READY_MARKER, CCA_POST_BOOT_TIMEOUT)?;
     if interactive_vtl0_shell {
         emu.interactive_vtl0_console(rootfs_file)?;
         emu.synchronize_vtl0_shell()?;
     }
     emu.send_line(CCA_VTL0_SHELL_COMMAND)?;
-    emu.wait_for(CCA_TEST_SUCCESS_MARKER)?;
+    emu.wait_for(CCA_TEST_SUCCESS_MARKER, CCA_POST_BOOT_TIMEOUT)?;
     // Need to manually kill FVP processes for the petri test since shrinkwrap doesn't wait
     // for them to exit and they can interfere with subsequent test runs if left running
     stop_fvp_processes_for_rootfs(rootfs_file)?;
@@ -708,7 +710,6 @@ fn start_cca_emulator(
         stdin,
         output_recv,
         output: String::new(),
-        started: Instant::now(),
     })
 }
 
@@ -751,12 +752,12 @@ struct CcaEmulator {
     stdin: std::process::ChildStdin,
     output_recv: mpsc::Receiver<String>,
     output: String,
-    started: Instant,
 }
 
 impl CcaEmulator {
-    fn wait_for(&mut self, marker: &str) -> anyhow::Result<()> {
-        tracing::info!(marker, "waiting for CCA emulator output");
+    fn wait_for(&mut self, marker: &str, timeout: Duration) -> anyhow::Result<()> {
+        tracing::info!(marker, ?timeout, "waiting for CCA emulator output");
+        let started = Instant::now();
 
         loop {
             if self.output.contains(marker) {
@@ -779,12 +780,14 @@ impl CcaEmulator {
                 );
             }
 
-            let remaining = CCA_TEST_TIMEOUT
-                .checked_sub(self.started.elapsed())
+            let remaining = timeout
+                .checked_sub(started.elapsed())
                 .unwrap_or(Duration::ZERO);
             if remaining.is_zero() {
                 let _ = self.child.kill_and_wait();
-                anyhow::bail!("timed out waiting for CCA emulator output `{marker}`");
+                anyhow::bail!(
+                    "timed out after {timeout:?} waiting for CCA emulator output `{marker}`"
+                );
             }
 
             match self
@@ -851,7 +854,7 @@ impl CcaEmulator {
         }
         self.output.clear();
         self.send_line("")?;
-        self.wait_for(CCA_VTL0_SHELL_PROMPT)
+        self.wait_for(CCA_VTL0_SHELL_PROMPT, CCA_POST_BOOT_TIMEOUT)
     }
 
     fn interactive_pause_before_start_tmk(&mut self, rootfs_file: &Path) -> anyhow::Result<()> {
@@ -907,7 +910,6 @@ impl CcaEmulator {
                         self.send_bytes(&bytes[..escape])?;
                         terminal_output.write_all(b"\r\n")?;
                         terminal_output.flush()?;
-                        self.started = Instant::now();
                         return Ok(());
                     }
                     self.send_bytes(&bytes)?;
@@ -990,7 +992,6 @@ impl CcaEmulator {
                 Ok(line) => {
                     let line = line.context("failed to read CCA pause command")?;
                     if line.trim() == CCA_PAUSE_CONTINUE_COMMAND {
-                        self.started = Instant::now();
                         tracing::info!("resuming CCA test after interactive pause");
                         return Ok(());
                     }
