@@ -7,6 +7,14 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
+# Enable the standalone CCA direct-Linux test entry point.
+cca_test = [
+    "dep:fdt",
+    "dep:serial_socket",
+    "dep:unix_socket",
+    "dep:virt_support_gic",
+]
+
 # Enable profiler support
 profiler = ["dep:profiler_worker", "diag_server/profiler"]
 # Enable profiler tracing (heap profiling) support
@@ -183,6 +191,10 @@ zerocopy.workspace = true
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
 aarch64defs.workspace = true
+fdt = { workspace = true, optional = true }
+serial_socket = { workspace = true, optional = true }
+unix_socket = { workspace = true, optional = true }
+virt_support_gic = { workspace = true, optional = true }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 firmware_pcat.workspace = true

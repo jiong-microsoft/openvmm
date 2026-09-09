@@ -30,6 +30,9 @@ pub fn underhill_main() -> anyhow::Result<()> {
         "underhill-init" => underhill_init::main(),
         "underhill-crash" => underhill_crash::main(),
         "underhill-dump" => underhill_dump::main(),
+        // xtask-fmt allow-target-arch sys-crate
+        #[cfg(all(feature = "cca_test", target_arch = "aarch64"))]
+        "underhill-cca" => underhill_core::cca_test_main(),
         _ => underhill_core::main(),
     }
 }

@@ -10,6 +10,7 @@ rust-version.workspace = true
 default = ["tpm"]
 
 # see the `underhill_entry` crate for more info on these features
+cca_test = ["underhill_entry/cca_test"]
 gdb = ["underhill_entry/gdb", "openvmm_hcl_resources/debug_worker"]
 tpm = ["openvmm_hcl_resources/tpm"]
 mem-profile-tracing = ["underhill_entry/mem-profile-tracing"]

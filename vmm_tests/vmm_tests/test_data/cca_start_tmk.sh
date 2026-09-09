@@ -29,8 +29,8 @@ if [ "$MODE" = "uefi" ]; then
     exit 0
 fi
 
-if [ ! -x ./tmk_vmm ]; then
-    echo "[plane0] ERROR: packed tmk_vmm binary is missing"
+if [ ! -x ./underhill-cca ]; then
+    echo "[plane0] ERROR: packed Underhill CCA binary is missing"
     exit 1
 fi
 
@@ -44,17 +44,16 @@ if [ ! -f ./vtl0-initramfs.cpio ]; then
     exit 1
 fi
 
-echo "[plane0] Launching CCA Plane1 with a direct-booted Linux VTL0..."
+echo "[plane0] Launching CCA Plane1 Linux through underhill_core..."
 tty_settings="$(/root/busybox stty -g)"
 restore_tty() {
     /root/busybox stty "$tty_settings"
 }
 trap restore_tty EXIT
 /root/busybox stty raw -echo opost onlcr
-./tmk_vmm --hv cca \
+./underhill-cca \
     --linux-kernel ./Image \
     --linux-initrd ./vtl0-initramfs.cpio \
-    --linux-serial-raw \
     --linux-success-marker CCA_VTL0_SHELL_COMMAND_OK \
     --memory-mb 96
 restore_tty

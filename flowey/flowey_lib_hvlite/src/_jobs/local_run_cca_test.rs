@@ -4,6 +4,10 @@
 //! Run OpenVMM CCA tests. Now we run them using emulator, code can be tweaked
 //! to support running tests on native hardware platform.
 use crate::build_openvmm::OpenvmmFeature;
+use crate::build_openvmm_hcl::MaxTraceLevel;
+use crate::build_openvmm_hcl::OpenvmmHclBuildParams;
+use crate::build_openvmm_hcl::OpenvmmHclBuildProfile;
+use crate::build_openvmm_hcl::OpenvmmHclFeature;
 use crate::common::CommonArch;
 use crate::common::CommonPlatform;
 use crate::common::CommonProfile;
@@ -26,7 +30,7 @@ new_simple_flow_node!(struct Node);
 const ENV_CCA_TEST_ROOT: &str = "OPENVMM_CCA_TEST_ROOT";
 const ENV_CCA_OPENVMM: &str = "OPENVMM_CCA_OPENVMM";
 const ENV_CCA_UEFI_IGVM: &str = "OPENVMM_CCA_UEFI_IGVM";
-const ENV_CCA_TMK_VMM: &str = "OPENVMM_CCA_TMK_VMM";
+const ENV_CCA_UNDERHILL: &str = "OPENVMM_CCA_UNDERHILL";
 const ENV_CCA_PAUSE_BEFORE_START_TMK: &str = "OPENVMM_CCA_PAUSE_BEFORE_START_TMK";
 const ENV_CCA_INTERACTIVE_VTL0_SHELL: &str = "OPENVMM_CCA_INTERACTIVE_VTL0_SHELL";
 
@@ -35,7 +39,7 @@ impl SimpleFlowNode for Node {
 
     fn imports(ctx: &mut ImportCtx<'_>) {
         ctx.import::<crate::build_openvmm::Node>();
-        ctx.import::<crate::build_tmk_vmm::Node>();
+        ctx.import::<crate::build_openvmm_hcl::Node>();
         ctx.import::<crate::build_uefi_igvm::Node>();
     }
 
@@ -61,24 +65,29 @@ impl SimpleFlowNode for Node {
             version: None,
             openvmm: v,
         });
-        let tmk_vmm_output = ctx.reqv(|v| crate::build_tmk_vmm::Request {
-            target: CommonTriple::Common {
-                arch: CommonArch::Aarch64,
-                platform: CommonPlatform::LinuxGnu,
+        let underhill_output = ctx.reqv(|v| crate::build_openvmm_hcl::Request {
+            build_params: OpenvmmHclBuildParams {
+                target: CommonTriple::Common {
+                    arch: CommonArch::Aarch64,
+                    platform: CommonPlatform::LinuxMusl,
+                },
+                profile: OpenvmmHclBuildProfile::OpenvmmHclShip,
+                features: BTreeSet::from([OpenvmmHclFeature::LocalOnlyCustom("cca_test".into())]),
+                no_split_dbg_info: true,
+                max_trace_level: MaxTraceLevel::Info,
             },
-            profile: CommonProfile::Debug,
-            tmk_vmm: v,
+            openvmm_hcl_output: v,
         });
         let uefi_igvm = ctx.reqv(|v| crate::build_uefi_igvm::Request { igvm: v });
 
         ctx.emit_rust_step("running cca tests", |ctx| {
             done.claim(ctx);
             let openvmm_output = openvmm_output.claim(ctx);
-            let tmk_vmm_output = tmk_vmm_output.claim(ctx);
+            let underhill_output = underhill_output.claim(ctx);
             let uefi_igvm = uefi_igvm.claim(ctx);
             move |rt| {
                 let openvmm_output = rt.read(openvmm_output);
-                let tmk_vmm_output = rt.read(tmk_vmm_output);
+                let underhill_output = rt.read(underhill_output);
                 let uefi_igvm = rt.read(uefi_igvm);
                 let crate::build_openvmm::OpenvmmOutput::LinuxBin {
                     bin: openvmm_bin, ..
@@ -86,18 +95,12 @@ impl SimpleFlowNode for Node {
                 else {
                     anyhow::bail!("expect Linux openvmm only");
                 };
-                let crate::build_tmk_vmm::TmkVmmOutput::LinuxBin {
-                    bin: tmk_vmm_bin,
-                    ..
-                } = tmk_vmm_output
-                else {
-                    anyhow::bail!("expect Linux tmk_vmm only");
-                };
+                let underhill_bin = underhill_output.bin;
 
                 if build_only {
                     log::info!("CCA test artifacts built; skipping Petri test because --build-only was specified");
                     log::info!("openvmm: {}", openvmm_bin.display());
-                    log::info!("tmk_vmm: {}", tmk_vmm_bin.display());
+                    log::info!("underhill-cca: {}", underhill_bin.display());
                     log::info!("AArch64 UEFI IGVM: {}", uefi_igvm.display());
                     return Ok(());
                 }
@@ -106,7 +109,7 @@ impl SimpleFlowNode for Node {
                     .env(ENV_CCA_TEST_ROOT, &test_root)
                     .env(ENV_CCA_OPENVMM, &openvmm_bin)
                     .env(ENV_CCA_UEFI_IGVM, &uefi_igvm)
-                    .env(ENV_CCA_TMK_VMM, &tmk_vmm_bin);
+                    .env(ENV_CCA_UNDERHILL, &underhill_bin);
 
                 if pause_before_start_tmk {
                     cmd = cmd.env(ENV_CCA_PAUSE_BEFORE_START_TMK, "1");

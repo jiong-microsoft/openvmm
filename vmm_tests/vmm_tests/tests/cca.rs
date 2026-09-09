@@ -64,7 +64,7 @@ struct CcaRuntimeArtifacts {
     e2fsck_bin: petri::ResolvedArtifact,
     resize2fs_bin: petri::ResolvedArtifact,
     openvmm_bin: petri::ResolvedArtifact,
-    tmk_vmm_bin: petri::ResolvedArtifact,
+    underhill_bin: petri::ResolvedArtifact,
     guest_disk: petri::ResolvedArtifact,
     plane0_linux_image: petri::ResolvedArtifact,
     kvmtool_efi: petri::ResolvedArtifact,
@@ -93,7 +93,7 @@ impl CcaRuntimeArtifacts {
             ("cca::E2FSCK", self.e2fsck_bin.get()),
             ("cca::RESIZE2FS", self.resize2fs_bin.get()),
             ("OPENVMM_LINUX_AARCH64", self.openvmm_bin.get()),
-            ("tmks::TMK_VMM_LINUX_AARCH64", self.tmk_vmm_bin.get()),
+            ("cca::UNDERHILL_CCA", self.underhill_bin.get()),
             ("cca::GUEST_DISK", self.guest_disk.get()),
             ("cca::PLANE0_LINUX_IMAGE", self.plane0_linux_image.get()),
             ("cca::KVMTOOL_EFI", self.kvmtool_efi.get()),
@@ -123,8 +123,8 @@ fn resolve_cca_runtime(resolver: &petri::ArtifactResolver<'_>) -> Option<CcaRunt
         openvmm_bin: resolver
             .require(petri_artifacts_vmm_test::artifacts::OPENVMM_LINUX_AARCH64)
             .erase(),
-        tmk_vmm_bin: resolver
-            .require(petri_artifacts_vmm_test::artifacts::tmks::TMK_VMM_LINUX_AARCH64)
+        underhill_bin: resolver
+            .require(petri_artifacts_vmm_test::artifacts::cca::UNDERHILL_CCA)
             .erase(),
         guest_disk: resolver
             .require(petri_artifacts_vmm_test::artifacts::cca::GUEST_DISK)
@@ -223,7 +223,10 @@ fn prepare_cca_rootfs(artifacts: &CcaRuntimeArtifacts) -> anyhow::Result<Prepare
 
     let cca_files = [
         (artifacts.openvmm_bin.get(), Path::new("cca/openvmm")),
-        (artifacts.tmk_vmm_bin.get(), Path::new("cca/tmk_vmm")),
+        (
+            artifacts.underhill_bin.get(),
+            Path::new("cca/underhill-cca"),
+        ),
         (artifacts.guest_disk.get(), Path::new("cca/guest-disk.img")),
         (artifacts.plane0_linux_image.get(), Path::new("cca/Image")),
         (artifacts.kvmtool_efi.get(), Path::new("cca/KVMTOOL_EFI.fd")),

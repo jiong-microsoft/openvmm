@@ -726,6 +726,8 @@ pub mod artifacts {
             LKVM,
             /// AArch64 UEFI payload packaged as an IGVM file
             UEFI_IGVM,
+            /// OpenVMM-HCL binary with the standalone CCA Linux entry point
+            UNDERHILL_CCA,
         }
     }
 

@@ -7,6 +7,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
+# Enable the standalone CCA direct-Linux test entry point.
+cca_test = ["underhill_core/cca_test"]
+
 # Enable gdbstub support.
 gdb = ["underhill_core/gdb"]
 

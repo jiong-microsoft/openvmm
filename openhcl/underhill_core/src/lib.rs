@@ -8,6 +8,8 @@
 #![expect(missing_docs)]
 #![forbid(unsafe_code)]
 
+#[cfg(all(feature = "cca_test", guest_arch = "aarch64"))]
+mod cca_test;
 mod diag;
 mod dispatch;
 mod emuplat;
@@ -31,6 +33,9 @@ mod wrapped_partition;
 // `pub` so that the missing_docs warning fires for options without
 // documentation.
 pub use options::Options;
+
+#[cfg(all(feature = "cca_test", guest_arch = "aarch64"))]
+pub use cca_test::main as cca_test_main;
 
 use crate::diag::DiagWorker;
 use crate::dispatch::UhVmRpc;

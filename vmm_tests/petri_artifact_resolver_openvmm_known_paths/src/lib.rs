@@ -157,6 +157,7 @@ impl petri_artifacts_core::ResolveTestArtifact for OpenvmmKnownPathsTestArtifact
             _ if id == cca::KVMTOOL_EFI => cca_package_path("KVMTOOL_EFI.fd", "CCA kvmtool EFI firmware"),
             _ if id == cca::LKVM => cca_package_path("lkvm", "CCA lkvm"),
             _ if id == cca::UEFI_IGVM => cca_uefi_igvm_path(),
+            _ if id == cca::UNDERHILL_CCA => cca_underhill_path(),
 
             _ if id == vmgstool::VMGSTOOL_NATIVE => vmgstool_native_executable_path(),
             _ if id == vmgstool::VMGSTOOL_DEV_NATIVE => vmgstool_dev_native_executable_path(),
@@ -488,6 +489,7 @@ const OPENVMM_CCA_OPENVMM_ENV_VAR: &str = "OPENVMM_CCA_OPENVMM";
 const OPENVMM_CCA_UEFI_IGVM_ENV_VAR: &str = "OPENVMM_CCA_UEFI_IGVM";
 const OPENVMM_CCA_TMK_VMM_ENV_VAR: &str = "OPENVMM_CCA_TMK_VMM";
 const OPENVMM_CCA_SIMPLE_TMK_ENV_VAR: &str = "OPENVMM_CCA_SIMPLE_TMK";
+const OPENVMM_CCA_UNDERHILL_ENV_VAR: &str = "OPENVMM_CCA_UNDERHILL";
 
 fn cca_missing_command(description: &'static str) -> MissingCommand<'static> {
     MissingCommand::XFlowey {
@@ -558,6 +560,19 @@ fn cca_uefi_igvm_path() -> anyhow::Result<PathBuf> {
             MissingCommand::Custom {
                 description: "CCA AArch64 UEFI IGVM",
                 cmd: "cargo xflowey cca-tests --custom-uefi PATH_TO_MSVM_FD",
+            },
+        )
+    })
+}
+
+fn cca_underhill_path() -> anyhow::Result<PathBuf> {
+    env_path_or(OPENVMM_CCA_UNDERHILL_ENV_VAR, || {
+        get_path(
+            "target/aarch64-unknown-linux-musl/underhill-ship",
+            "openvmm_hcl",
+            MissingCommand::Custom {
+                description: "OpenVMM-HCL CCA direct-Linux launcher",
+                cmd: "cargo build -p openvmm_hcl --no-default-features --features cca_test --target aarch64-unknown-linux-musl --profile underhill-ship",
             },
         )
     })

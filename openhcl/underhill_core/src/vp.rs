@@ -150,6 +150,11 @@ impl VpSpawner {
                 self.run_backed_vp::<virt_mshv_vtl::TdxBacked>(saved_state, control)
                     .await
             }
+            #[cfg(guest_arch = "aarch64")]
+            virt::IsolationType::Cca => {
+                self.run_backed_vp::<virt_mshv_vtl::CcaBacked>(saved_state, control)
+                    .await
+            }
             #[expect(clippy::allow_attributes)]
             #[allow(unreachable_patterns)]
             _ => unimplemented!(),
